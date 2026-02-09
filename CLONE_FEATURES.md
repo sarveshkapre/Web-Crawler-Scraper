@@ -8,11 +8,6 @@
 
 ## Candidate Features To Do
 
-- [ ] **P1: Automation-grade exit codes + summary** (Impact 4, Effort 2, Fit 5, Diff 2, Risk 1, Conf 4)
-  - Document stable exit codes (usage error vs runtime error vs Ctrl-C).
-  - Add `--summary-json` (print crawl stats to stdout/stderr deterministically).
-- [ ] **P1: URL allow/deny filters** (Impact 4, Effort 3, Fit 5, Diff 2, Risk 2, Conf 4)
-  - Add `--include-regex` / `--exclude-regex` applied to normalized URLs.
 - [ ] **P2: Sitemap seeding** (Impact 3, Effort 3, Fit 4, Diff 2, Risk 2, Conf 3)
   - Add `--sitemap-url` (repeatable) and/or auto-discover `/sitemap.xml` when same-host.
 - [ ] **P2: Concurrency + polite throttling** (Impact 4, Effort 4, Fit 4, Diff 2, Risk 3, Conf 3)
@@ -35,6 +30,8 @@
 - [x] 2026-02-09: Structured outputs for automation (`--out-urls` JSONL events, `--out-flags`, `--append-output`). Evidence: `src/webcrawler/cli.py`, `src/webcrawler/crawler.py`, `tests/test_cli_outputs.py`, `README.md`, `make lint`, `make test`. Commit: `eef8325`.
 - [x] 2026-02-09: Persistence/resume for long crawls (`--state`, `--resume`, periodic checkpointing). Evidence: `src/webcrawler/state.py`, `src/webcrawler/cli.py`, `src/webcrawler/crawler.py`, `tests/test_cli_resume.py`, `README.md`, `make lint`, `make test`, `make smoke`. Commit: `2c76e2f`.
 - [x] 2026-02-09: Improved robots Crawl-delay parsing (multi-User-agent groups; exact UA beats `*`). Evidence: `src/webcrawler/crawler.py`, `tests/test_robots_delay.py`, `make test`. Commit: `2c76e2f`.
+- [x] 2026-02-09: Automation-grade crawl summary output (`--summary-json`) + documented stable exit codes. Evidence: `src/webcrawler/cli.py`, `src/webcrawler/crawler.py`, `tests/test_cli_summary_json.py`, `README.md`, `make lint`, `make test`, `make smoke`. Commit: `4cd0f87`.
+- [x] 2026-02-09: URL allow/deny filters (`--include-regex`, `--exclude-regex`) applied to normalized URLs. Evidence: `src/webcrawler/cli.py`, `src/webcrawler/crawler.py`, `tests/test_cli_url_filters.py`, `README.md`, `make lint`, `make test`. Commit: `f864a1f`.
 - [x] 2026-02-09: Python 3 crawler CLI + modular package (`src/webcrawler/*`, `pyproject.toml`, `webcrawler`). Evidence: `tests/test_crawl_integration.py`, `tests/test_urltools.py`, `make lint`, `make test`. Commits: `f6b2d7d`, `0eb1f7c`.
 - [x] 2026-02-09: Politeness + reliability baseline (robots.txt obey by default, per-host delay knob, bounded retries, manual redirect handling, URL normalization/dedupe). Evidence: `src/webcrawler/crawler.py`, `src/webcrawler/urltools.py`. Commits: `f6b2d7d`.
 - [x] 2026-02-09: CI for lint + tests (GitHub Actions). Evidence: `.github/workflows/ci.yml`. Commit: `0eb1f7c`.
