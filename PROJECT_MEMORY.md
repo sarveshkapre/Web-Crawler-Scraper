@@ -5,7 +5,7 @@
 
 ## Architecture Snapshot
 - CLI entrypoint: `webcrawler` (console script via `pyproject.toml`) and repo-local wrapper `./webcrawler`.
-- Package layout: `src/webcrawler/` with `cli.py`, `crawler.py`, `state.py`, `urltools.py`.
+- Package layout: `src/webcrawler/` with `cli.py`, `crawler.py`, `sitemaps.py`, `state.py`, `urltools.py`.
 - Crawl engine basics:
   - Frontier: FIFO queue + normalized URL dedupe.
   - Politeness: robots.txt obeyed by default; optional per-host delay; Crawl-delay hint parsing (best-effort).
@@ -15,10 +15,12 @@
 
 ## Open Problems
 - No concurrency (single-threaded fetch loop).
-- No sitemap seeding (`sitemap.xml`) yet.
+- No max depth / hop limit yet.
 
 ## Recent Decisions
 - Template: YYYY-MM-DD | Decision | Why | Evidence (tests/logs) | Commit | Confidence (high/medium/low) | Trust (trusted/untrusted)
+- 2026-02-09 | Add sitemap seeding (`--sitemap-url`, `--sitemap-auto`, `--sitemap-from-robots`) | Helps find pages that are not discoverable via link traversal; keeps crawler useful on sites with sparse navigation | `make lint`, `make test`, `make smoke`, new sitemap seeding tests, GitHub Actions CI success | 7e96dc2 | high | trusted
+- 2026-02-09 | Add optional tracking-param stripping (`--strip-query-param`, `--strip-utm`) applied before dedupe | Reduces duplicated crawl work caused by analytics query params; improves crawl coverage under a fixed max-pages budget | `make lint`, `make test`, `make smoke`, new CLI + urltools tests, GitHub Actions CI success | 603971c | high | trusted
 - 2026-02-09 | Port crawler to Python 3 with a modular CLI + package | Python 2-only script was not runnable in current environments; modern CLI enables safe crawl controls and testability | `make lint`, `make test`, local CLI smoke crawl (flags extracted) | f6b2d7d, 0eb1f7c | high | trusted
 - 2026-02-09 | Add structured outputs + persistence/resume + improved Crawl-delay parsing | Automation needs file outputs; long crawls need checkpoint/resume; Crawl-delay parsing needed basic correctness for multi-User-agent groups | `make lint`, `make test`, `make smoke`, new tests for CLI outputs/resume and Crawl-delay parsing | eef8325, 2c76e2f | high | trusted
 - 2026-02-09 | Add machine-readable crawl summary (`--summary-json`) + document stable exit codes | Makes CLI automation-friendly without breaking flag-extraction stdout contract | `make lint`, `make test`, `make smoke`, new tests for summary output | 4cd0f87 | high | trusted
@@ -33,8 +35,8 @@
 
 ## Next Prioritized Tasks
 - P2: Concurrency with per-host caps + politeness defaults.
-- P2: Sitemap seeding (`--sitemap-url` and/or `sitemap.xml` auto-discovery).
-- P2: Optional tracking-param stripping (UTM/query param allowlist) to reduce duplicate crawl work.
+- P2: Max depth / hop limit to bound traversal.
+- P3: Hard politeness mode (`--robots-fail-closed`) for controlled environments.
 
 ## Verification Evidence
 - Template: YYYY-MM-DD | Command | Key output | Status (pass/fail)
@@ -57,6 +59,14 @@
 - 2026-02-09 | `gh run watch 21832092071 --interval 5 --exit-status` | `CI completed success` | pass
 - 2026-02-09 | `. .venv/bin/activate && make lint` | `All checks passed!` | pass
 - 2026-02-09 | `gh run watch 21832159506 --interval 5 --exit-status` | `CI completed success` | pass
+- 2026-02-09 | `. .venv/bin/activate && make lint` | `All checks passed!` | pass
+- 2026-02-09 | `. .venv/bin/activate && make test` | `16 passed` | pass
+- 2026-02-09 | `. .venv/bin/activate && make smoke` | `exit_code=0 stdout_flags=['SMOKE_ONE','SMOKE_TWO']` | pass
+- 2026-02-09 | `gh run watch 21841017448 --interval 5 --exit-status` | `CI completed success` | pass
+- 2026-02-09 | `. .venv/bin/activate && make lint` | `All checks passed!` | pass
+- 2026-02-09 | `. .venv/bin/activate && make test` | `19 passed` | pass
+- 2026-02-09 | `. .venv/bin/activate && make smoke` | `exit_code=0 stdout_flags=['SMOKE_ONE','SMOKE_TWO']` | pass
+- 2026-02-09 | `gh run watch 21841156652 --interval 5 --exit-status` | `CI completed success` | pass
 
 ## Historical Summary
 - Keep compact summaries of older entries here when file compaction runs.

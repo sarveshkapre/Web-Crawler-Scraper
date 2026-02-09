@@ -8,12 +8,6 @@
 
 ## Candidate Features To Do
 
-- [ ] **P1: Sitemap seeding (selected)** (Impact 4, Effort 3, Fit 5, Diff 2, Risk 2, Conf 4)
-  - Add `--sitemap-url` (repeatable) and opt-in auto-discovery (`/sitemap.xml`) on start hosts.
-  - Parse `urlset` and `sitemapindex` (including nested indexes); seed URLs into the frontier.
-- [ ] **P1: Optional tracking-param stripping (selected)** (Impact 4, Effort 2, Fit 5, Diff 2, Risk 2, Conf 4)
-  - Add `--strip-query-param utm_source` (repeatable) and `--strip-utm` convenience.
-  - Apply before normalization/dedupe to reduce duplicate crawl work.
 - [ ] **P2: Concurrency + polite throttling** (Impact 4, Effort 4, Fit 4, Diff 2, Risk 3, Conf 3)
   - Optional parallel fetch with per-host caps + backpressure; keep robots/pacing correct.
 - [ ] **P2: Max depth / hop limit** (Impact 3, Effort 3, Fit 4, Diff 2, Risk 2, Conf 3)
@@ -30,6 +24,8 @@
   - Add `--robots-fail-closed` to stop on robots fetch/parse failures (default remains fail-open).
 
 ## Implemented
+- [x] 2026-02-09: Sitemap seeding (`--sitemap-url`, `--sitemap-auto`, `--sitemap-from-robots`) to find non-linked pages. Evidence: `src/webcrawler/sitemaps.py`, `src/webcrawler/cli.py`, `tests/test_cli_sitemap_seeding.py`, `README.md`, `make lint`, `make test`, `make smoke`. Commit: `7e96dc2`.
+- [x] 2026-02-09: Optional tracking-param stripping (`--strip-query-param`, `--strip-utm`) applied before normalization/dedupe. Evidence: `src/webcrawler/urltools.py`, `src/webcrawler/crawler.py`, `src/webcrawler/cli.py`, `tests/test_cli_strip_query_params.py`, `tests/test_urltools.py`, `README.md`, `make lint`, `make test`, `make smoke`. Commit: `603971c`.
 - [x] 2026-02-09: Structured outputs for automation (`--out-urls` JSONL events, `--out-flags`, `--append-output`). Evidence: `src/webcrawler/cli.py`, `src/webcrawler/crawler.py`, `tests/test_cli_outputs.py`, `README.md`, `make lint`, `make test`. Commit: `eef8325`.
 - [x] 2026-02-09: Persistence/resume for long crawls (`--state`, `--resume`, periodic checkpointing). Evidence: `src/webcrawler/state.py`, `src/webcrawler/cli.py`, `src/webcrawler/crawler.py`, `tests/test_cli_resume.py`, `README.md`, `make lint`, `make test`, `make smoke`. Commit: `2c76e2f`.
 - [x] 2026-02-09: Improved robots Crawl-delay parsing (multi-User-agent groups; exact UA beats `*`). Evidence: `src/webcrawler/crawler.py`, `tests/test_robots_delay.py`, `make test`. Commit: `2c76e2f`.
@@ -49,12 +45,19 @@ Common baseline expectations for production crawlers/scrapers in this segment:
 - Developer UX: clear CLI flags, structured logs, and structured outputs (JSONL/CSV) for downstream consumption.
 - Long runs: pause/resume or checkpointing to avoid losing progress.
 
+### Gap Map (High Level)
+- Missing: concurrency (per-host caps) and a hop-based `--max-depth`.
+- Weak: canonicalization beyond regex filters and query-param stripping (for example canonical link tag support).
+- Parity: robots obey + pacing knobs, retry/backoff, structured outputs, resume/checkpointing, sitemap seeding.
+- Differentiator: intentionally small, automation-friendly CLI with optional "secret flag" extraction and a stable summary JSON.
+
 Sources (untrusted; for feature expectation only):
 ```text
 https://docs.scrapy.org/en/latest/topics/autothrottle.html
 https://docs.scrapy.org/en/latest/topics/settings.html#std-setting-ROBOTSTXT_OBEY
 https://docs.scrapy.org/en/latest/topics/downloader-middleware.html?highlight=RetryMiddleware#retrymiddleware
 https://docs.scrapy.org/en/latest/topics/feed-exports.html
+https://docs.scrapy.org/en/latest/topics/spiders.html#sitemapspider
 https://doc.scrapy.org/en/master/topics/jobs.html
 https://crawler.archive.org/heritrix.html
 https://www.gnu.org/software/wget/manual/wget.html#Recursive-Retrieval-Options
@@ -62,6 +65,7 @@ https://www.gnu.org/software/wget/manual/html_node/Logging-and-Input-File-Option
 https://www.gnu.org/software/wget/manual/html_node/Download-Options.html
 https://www.gnu.org/software/wget/manual/html_node/Exit-Status.html
 https://docs.python.org/3/library/urllib.robotparser.html
+https://www.sitemaps.org/protocol.html
 ```
 
 ## Notes
