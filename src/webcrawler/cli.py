@@ -72,6 +72,21 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Skip URLs whose normalized form matches any regex (repeatable).",
     )
 
+    p.add_argument(
+        "--strip-query-param",
+        action="append",
+        default=[],
+        help="Drop these query parameter names before normalization/dedupe (repeatable).",
+    )
+    p.add_argument(
+        "--strip-utm",
+        action="store_true",
+        help=(
+            "Strip common utm_* tracking params "
+            "(utm_source, utm_medium, utm_campaign, utm_term, utm_content, utm_id)."
+        ),
+    )
+
     p.add_argument("--login-url", help="Login URL for form-based auth (optional).")
     p.add_argument("--username", help="Username for login (optional).")
     p.add_argument("--password", help="Password for login (optional).")
@@ -138,7 +153,23 @@ def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     _configure_logging(args.verbose)
 
-    start_urls = [normalize_url(u) for u in args.start_url]
+    strip_query_params: set[str] = {
+        str(x).strip().lower() for x in (args.strip_query_param or []) if str(x).strip()
+    }
+    if args.strip_utm:
+        strip_query_params |= {
+            "utm_source",
+            "utm_medium",
+            "utm_campaign",
+            "utm_term",
+            "utm_content",
+            "utm_id",
+        }
+
+    def _norm(u: str) -> str:
+        return normalize_url(u, strip_query_params=strip_query_params or None)
+
+    start_urls = [_norm(u) for u in args.start_url]
 
     include_patterns = []
     for pat in args.include_regex or []:
@@ -207,12 +238,17 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"error: failed to load state: {e}", file=sys.stderr)
                 return 1
             crawl_state = persisted.state
+            if strip_query_params:
+                # If the caller changes normalization behavior, canonicalize the in-memory state so
+                # dedupe/frontier behavior matches the new config.
+                crawl_state.frontier = deque(_norm(u) for u in crawl_state.frontier)
+                crawl_state.seen = {_norm(u) for u in crawl_state.seen}
             # Optionally seed extra start URLs into the frontier for convenience.
             for u in start_urls:
                 if u not in crawl_state.seen:
                     crawl_state.frontier.append(u)
             if not start_urls:
-                start_urls = list(persisted.start_urls)
+                start_urls = [_norm(u) for u in persisted.start_urls]
         else:
             if args.resume:
                 print("error: --resume requires an existing --state file.", file=sys.stderr)
@@ -267,6 +303,7 @@ def main(argv: list[str] | None = None) -> int:
         max_flags=args.max_flags,
         include_patterns=tuple(include_patterns),
         exclude_patterns=tuple(exclude_patterns),
+        strip_query_params=frozenset(strip_query_params),
     )
 
     def _checkpoint(st: CrawlState) -> None:

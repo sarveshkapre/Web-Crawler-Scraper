@@ -49,6 +49,17 @@ Exclude URLs that match any regex pattern:
 webcrawler --start-url https://example.com --exclude-regex '\\.pdf$' --exclude-regex '/logout'
 ```
 
+## URL Normalization (Optional)
+Strip tracking query parameters before normalization/dedupe (reduces duplicate crawling):
+```bash
+webcrawler --start-url https://example.com --strip-utm
+```
+
+Or strip specific parameters (repeatable):
+```bash
+webcrawler --start-url https://example.com --strip-query-param utm_source --strip-query-param gclid
+```
+
 ## Login (Optional)
 If you need a basic form-based login, provide `--login-url` and credentials. The crawler will:
 1. GET the login page

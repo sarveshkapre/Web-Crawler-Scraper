@@ -8,13 +8,16 @@
 
 ## Candidate Features To Do
 
-- [ ] **P2: Sitemap seeding** (Impact 3, Effort 3, Fit 4, Diff 2, Risk 2, Conf 3)
-  - Add `--sitemap-url` (repeatable) and/or auto-discover `/sitemap.xml` when same-host.
+- [ ] **P1: Sitemap seeding (selected)** (Impact 4, Effort 3, Fit 5, Diff 2, Risk 2, Conf 4)
+  - Add `--sitemap-url` (repeatable) and opt-in auto-discovery (`/sitemap.xml`) on start hosts.
+  - Parse `urlset` and `sitemapindex` (including nested indexes); seed URLs into the frontier.
+- [ ] **P1: Optional tracking-param stripping (selected)** (Impact 4, Effort 2, Fit 5, Diff 2, Risk 2, Conf 4)
+  - Add `--strip-query-param utm_source` (repeatable) and `--strip-utm` convenience.
+  - Apply before normalization/dedupe to reduce duplicate crawl work.
 - [ ] **P2: Concurrency + polite throttling** (Impact 4, Effort 4, Fit 4, Diff 2, Risk 3, Conf 3)
   - Optional parallel fetch with per-host caps + backpressure; keep robots/pacing correct.
-- [ ] **P2: Optional tracking-param stripping** (Impact 3, Effort 2, Fit 4, Diff 2, Risk 2, Conf 3)
-  - Add `--strip-query-param utm_source` (repeatable) and/or `--strip-utm` convenience.
-  - Apply before normalization/dedupe to reduce duplicate crawl work.
+- [ ] **P2: Max depth / hop limit** (Impact 3, Effort 3, Fit 4, Diff 2, Risk 2, Conf 3)
+  - Add `--max-depth` to bound traversal by link distance from seeds (sitemap seeds count as depth 0).
 - [ ] **P3: HTTP cache / conditional GET** (Impact 3, Effort 4, Fit 3, Diff 2, Risk 3, Conf 2)
   - Support `ETag`/`If-Modified-Since` to reduce refetching on repeated crawls.
 - [ ] **P3: Extraction rules engine** (Impact 3, Effort 4, Fit 3, Diff 4, Risk 3, Conf 2)

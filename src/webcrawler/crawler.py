@@ -36,6 +36,7 @@ class CrawlConfig:
     max_flags: int
     include_patterns: tuple[re.Pattern, ...] = ()
     exclude_patterns: tuple[re.Pattern, ...] = ()
+    strip_query_params: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -237,7 +238,10 @@ def crawl(
 ) -> CrawlResult:
     robots = RobotsCache()
     st = state or CrawlState(
-        frontier=deque(normalize_url(u) for u in config.start_urls),
+        frontier=deque(
+            normalize_url(u, strip_query_params=config.strip_query_params)
+            for u in config.start_urls
+        ),
         seen=set(),
         flags=set(),
         pages_fetched=0,
@@ -286,7 +290,7 @@ def crawl(
 
     while st.frontier and st.pages_fetched < config.max_pages and len(st.flags) < config.max_flags:
         url = st.frontier.popleft()
-        url = normalize_url(url)
+        url = normalize_url(url, strip_query_params=config.strip_query_params)
 
         if url in st.seen:
             continue
@@ -323,7 +327,7 @@ def crawl(
             continue
 
         st.pages_fetched += 1
-        fetched_url = normalize_url(resp.url)
+        fetched_url = normalize_url(resp.url, strip_query_params=config.strip_query_params)
         st.seen.add(fetched_url)
         _record_delay(fetched_url)
 
@@ -341,7 +345,9 @@ def crawl(
             if 300 <= status < 400:
                 loc = resp.headers.get("Location")
                 if loc:
-                    redir = resolve_and_normalize(loc, base_url=fetched_url)
+                    redir = resolve_and_normalize(
+                        loc, base_url=fetched_url, strip_query_params=config.strip_query_params
+                    )
                     if redir:
                         ev["redirect_to"] = redir
             hooks.on_event(ev)
@@ -350,7 +356,9 @@ def crawl(
         if 300 <= status < 400:
             loc = resp.headers.get("Location")
             if loc:
-                nxt = resolve_and_normalize(loc, base_url=fetched_url)
+                nxt = resolve_and_normalize(
+                    loc, base_url=fetched_url, strip_query_params=config.strip_query_params
+                )
                 if (
                     nxt
                     and nxt not in st.seen
@@ -387,7 +395,9 @@ def crawl(
 
         for a in soup.find_all("a"):
             href = a.get("href")
-            nxt = resolve_and_normalize(href, base_url=fetched_url)
+            nxt = resolve_and_normalize(
+                href, base_url=fetched_url, strip_query_params=config.strip_query_params
+            )
             if not nxt:
                 continue
             if (
@@ -402,9 +412,13 @@ def crawl(
     return CrawlResult(seen=set(st.seen), flags=set(st.flags), pages_fetched=int(st.pages_fetched))
 
 
-def iter_extracted_links(html: str, *, base_url: str) -> Iterable[str]:
+def iter_extracted_links(
+    html: str, *, base_url: str, strip_query_params: set[str] | frozenset[str] | None = None
+) -> Iterable[str]:
     soup = BeautifulSoup(html, "html.parser")
     for a in soup.find_all("a"):
-        nxt = resolve_and_normalize(a.get("href"), base_url=base_url)
+        nxt = resolve_and_normalize(
+            a.get("href"), base_url=base_url, strip_query_params=strip_query_params
+        )
         if nxt:
             yield nxt
