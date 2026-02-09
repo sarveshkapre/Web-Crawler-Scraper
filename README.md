@@ -60,6 +60,22 @@ Or strip specific parameters (repeatable):
 webcrawler --start-url https://example.com --strip-query-param utm_source --strip-query-param gclid
 ```
 
+## Sitemaps (Optional)
+Seed the crawl frontier from sitemap XML (helps find pages that aren't linked from navigation):
+```bash
+webcrawler --start-url https://example.com --sitemap-url https://example.com/sitemap.xml
+```
+
+Opt-in auto-discovery:
+```bash
+webcrawler --start-url https://example.com --sitemap-auto
+```
+
+Discover sitemap URLs via `robots.txt` `Sitemap:` declarations:
+```bash
+webcrawler --start-url https://example.com --sitemap-from-robots
+```
+
 ## Login (Optional)
 If you need a basic form-based login, provide `--login-url` and credentials. The crawler will:
 1. GET the login page

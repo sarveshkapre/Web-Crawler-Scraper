@@ -8,6 +8,7 @@ import sys
 import time
 from collections import deque
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from .crawler import (
     CrawlConfig,
@@ -17,6 +18,7 @@ from .crawler import (
     crawl,
     login_with_hidden_fields,
 )
+from .sitemaps import extract_sitemap_urls_from_robots, seed_from_sitemaps
 from .state import load_state, save_state
 from .urltools import host_for_url, normalize_url
 
@@ -85,6 +87,29 @@ def _build_parser() -> argparse.ArgumentParser:
             "Strip common utm_* tracking params "
             "(utm_source, utm_medium, utm_campaign, utm_term, utm_content, utm_id)."
         ),
+    )
+
+    p.add_argument(
+        "--sitemap-url",
+        action="append",
+        default=[],
+        help="Seed the crawl frontier from this sitemap URL (repeatable).",
+    )
+    p.add_argument(
+        "--sitemap-auto",
+        action="store_true",
+        help="Try seeding from /sitemap.xml on the start URL host(s).",
+    )
+    p.add_argument(
+        "--sitemap-from-robots",
+        action="store_true",
+        help="Discover sitemap URLs via robots.txt Sitemap: declarations on start URL host(s).",
+    )
+    p.add_argument(
+        "--sitemap-max-urls",
+        type=int,
+        default=20_000,
+        help="Maximum number of URLs to seed from sitemaps (0 = no limit).",
     )
 
     p.add_argument("--login-url", help="Login URL for form-based auth (optional).")
@@ -368,6 +393,70 @@ def main(argv: list[str] | None = None) -> int:
     err_msg: str | None = None
     t0 = time.monotonic()
     try:
+        sitemap_urls: list[str] = []
+        for u in args.sitemap_url or []:
+            sitemap_urls.append(_norm(u))
+
+        # Optional auto-discovery on start URL bases.
+        if args.sitemap_auto or args.sitemap_from_robots:
+            bases: set[str] = set()
+            for u in config.start_urls:
+                parts = urlsplit(u)
+                if parts.scheme and parts.netloc:
+                    bases.add(f"{parts.scheme}://{parts.netloc}")
+
+            if args.sitemap_auto:
+                for base in sorted(bases):
+                    sitemap_urls.append(_norm(f"{base}/sitemap.xml"))
+
+            if args.sitemap_from_robots:
+                for base in sorted(bases):
+                    try:
+                        resp = session.get(f"{base}/robots.txt", timeout=args.timeout)
+                        if resp.status_code < 400:
+                            for sm in extract_sitemap_urls_from_robots(resp.text):
+                                sitemap_urls.append(_norm(sm))
+                    except Exception:
+                        continue
+
+        # Deduplicate sitemap URLs, preserving order.
+        if sitemap_urls:
+            uniq: list[str] = []
+            seen: set[str] = set()
+            for u in sitemap_urls:
+                if u and u not in seen:
+                    uniq.append(u)
+                    seen.add(u)
+            sitemap_urls = uniq
+
+        if sitemap_urls:
+            seeded, sm_summary = seed_from_sitemaps(
+                session=session,
+                sitemap_urls=sitemap_urls,
+                timeout_s=float(args.timeout),
+                allowed_hosts=allowed_hosts,
+                include_patterns=tuple(include_patterns),
+                exclude_patterns=tuple(exclude_patterns),
+                strip_query_params=strip_query_params or None,
+                max_urls=int(args.sitemap_max_urls or 0),
+            )
+            added = 0
+            for u in seeded:
+                if u not in crawl_state.seen:
+                    crawl_state.frontier.append(u)
+                    added += 1
+            if hooks.on_event:
+                hooks.on_event(
+                    {
+                        "type": "sitemap_seed",
+                        "sitemaps_fetched": sm_summary.sitemaps_fetched,
+                        "sitemaps_requested": len(sitemap_urls),
+                        "urls_added": added,
+                        "urls_parsed": sm_summary.urls_parsed,
+                        "urls_kept": sm_summary.urls_kept,
+                        "errors": sm_summary.errors,
+                    }
+                )
         _ = crawl(
             config,
             session=session,
