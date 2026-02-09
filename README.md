@@ -65,8 +65,8 @@ Flags are printed to stdout (one per line). Logs go to stderr.
 ```bash
 make lint
 make test
+make smoke
 ```
 
 For running from a repo checkout without installing, `./webcrawler` works as long as your
 active `python3` environment has dependencies installed (for example after activating `.venv`).
-

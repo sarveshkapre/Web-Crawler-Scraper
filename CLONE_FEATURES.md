@@ -8,24 +8,6 @@
 
 ## Candidate Features To Do
 
-### Selected For This Session (Cycle 1)
-- [ ] **P0: Port `webcrawler` to Python 3 + modern CLI** (Impact 5, Effort 3, Fit 5, Diff 2, Risk 2, Conf 5)
-  - Remove hardcoded target, add `--start-url`, `--allowed-domain`, `--max-pages`, `--timeout`, `--user-agent`.
-  - Keep backward-compatible `./webcrawler USER PASS` path via explicit options.
-- [ ] **P0: Reliability: retries/backoff, redirect handling, and rate limiting** (Impact 5, Effort 3, Fit 5, Diff 2, Risk 2, Conf 4)
-  - Avoid infinite loops on 5xx; add bounded retries.
-  - Respect `robots.txt` by default; allow opt-out for controlled environments.
-- [ ] **P0: URL normalization + dedupe + same-origin filtering** (Impact 4, Effort 2, Fit 5, Diff 2, Risk 2, Conf 5)
-  - Normalize fragments, resolve relative links, avoid re-crawling.
-- [ ] **P0: Add test + lint baseline** (Impact 5, Effort 3, Fit 5, Diff 2, Risk 2, Conf 4)
-  - Local integration test with a tiny HTTP server fixture.
-  - `ruff` + `pytest` run via `make test` / `make lint`.
-- [ ] **P0: Add GitHub Actions CI** (Impact 4, Effort 2, Fit 5, Diff 1, Risk 1, Conf 4)
-  - Run `ruff` and `pytest` on pushes to `main`.
-- [ ] **P0: Update README to match behavior** (Impact 4, Effort 2, Fit 5, Diff 1, Risk 1, Conf 5)
-  - Python 3 requirements; usage examples; troubleshooting.
-
-### Candidate Backlog (Not Selected Yet)
 - [ ] **P1: Structured outputs** (Impact 3, Effort 2, Fit 4, Diff 2, Risk 1, Conf 4)
   - `--out urls.jsonl` and `--out flags.txt` modes.
 - [ ] **P1: Persistence/resume** (Impact 4, Effort 4, Fit 4, Diff 3, Risk 3, Conf 3)
@@ -36,6 +18,10 @@
   - CSS/XPath selectors via config file.
 
 ## Implemented
+- [x] 2026-02-09: Python 3 crawler CLI + modular package (`src/webcrawler/*`, `pyproject.toml`, `webcrawler`). Evidence: `tests/test_crawl_integration.py`, `tests/test_urltools.py`, `make lint`, `make test`. Commits: `f6b2d7d`, `0eb1f7c`.
+- [x] 2026-02-09: Politeness + reliability baseline (robots.txt obey by default, per-host delay knob, bounded retries, manual redirect handling, URL normalization/dedupe). Evidence: `src/webcrawler/crawler.py`, `src/webcrawler/urltools.py`. Commits: `f6b2d7d`.
+- [x] 2026-02-09: CI for lint + tests (GitHub Actions). Evidence: `.github/workflows/ci.yml`. Commit: `0eb1f7c`.
+- [x] 2026-02-09: README aligned to current behavior. Evidence: `README.md`. Commit: `0eb1f7c`.
 
 ## Insights
 ### Bounded Market Scan (Expectations)
