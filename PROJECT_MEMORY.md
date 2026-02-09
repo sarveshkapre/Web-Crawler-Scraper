@@ -55,6 +55,8 @@
 - 2026-02-09 | `. .venv/bin/activate && make test` | `13 passed` | pass
 - 2026-02-09 | `. .venv/bin/activate && make smoke` | `exit_code=0 stdout_flags=['SMOKE_ONE','SMOKE_TWO']` | pass
 - 2026-02-09 | `gh run watch 21832092071 --interval 5 --exit-status` | `CI completed success` | pass
+- 2026-02-09 | `. .venv/bin/activate && make lint` | `All checks passed!` | pass
+- 2026-02-09 | `gh run watch 21832159506 --interval 5 --exit-status` | `CI completed success` | pass
 
 ## Historical Summary
 - Keep compact summaries of older entries here when file compaction runs.
