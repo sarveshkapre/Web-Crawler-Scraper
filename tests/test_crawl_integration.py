@@ -97,10 +97,10 @@ def test_crawl_obeys_robots_and_handles_redirects() -> None:
             extract_secret_flags=True,
             max_flags=10,
         )
-        seen, flags = crawl(config, session=session)
+        result = crawl(config, session=session)
 
-        assert {"ONE", "TWO", "THREE"} <= flags
-        assert "SHOULD_NOT_SEE" not in flags
+        assert {"ONE", "TWO", "THREE"} <= result.flags
+        assert "SHOULD_NOT_SEE" not in result.flags
 
         # Redirect requested and target fetched eventually.
         assert _Handler.counts.get("/redir", 0) == 1
@@ -112,6 +112,6 @@ def test_crawl_obeys_robots_and_handles_redirects() -> None:
         # robots.txt must be fetched at least once.
         assert _Handler.counts.get("/robots.txt", 0) >= 1
 
-        assert any(u.endswith("/") for u in seen)
+        assert any(u.endswith("/") for u in result.seen)
     finally:
         server.shutdown()

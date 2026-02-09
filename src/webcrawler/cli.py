@@ -4,6 +4,7 @@ import argparse
 import json
 import logging
 import sys
+import time
 from collections import deque
 from pathlib import Path
 
@@ -87,6 +88,20 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=50,
         help="Save --state every N fetched pages (0 disables periodic checkpoint).",
+    )
+
+    p.add_argument(
+        "--summary-json",
+        nargs="?",
+        const="stderr",
+        default=None,
+        metavar="PATH",
+        help=(
+            "Write a one-line JSON summary at the end of the crawl. "
+            "If omitted, no summary is written. "
+            "If provided without PATH, writes to stderr. "
+            "Use PATH to write to a file, or '-' to write to stdout."
+        ),
     )
 
     p.add_argument("-v", "--verbose", action="count", default=0, help="Increase log verbosity.")
@@ -190,6 +205,15 @@ def main(argv: list[str] | None = None) -> int:
             pages_fetched=0,
         )
 
+    if crawl_state is None:
+        # Use an explicit state even for non-persisted crawls so we can always emit a summary.
+        crawl_state = CrawlState(
+            frontier=deque(start_urls),
+            seen=set(),
+            flags=set(),
+            pages_fetched=0,
+        )
+
     config = CrawlConfig(
         start_urls=tuple(start_urls),
         allowed_hosts=allowed_hosts,
@@ -207,6 +231,13 @@ def main(argv: list[str] | None = None) -> int:
             return
         save_state(args.state, state=st, start_urls=config.start_urls, allowed_hosts=allowed_hosts)
 
+    event_counts: dict[str, int] = {}
+
+    def _count_event(ev: dict[str, object]) -> None:
+        typ = str(ev.get("type") or "")
+        if typ:
+            event_counts[typ] = event_counts.get(typ, 0) + 1
+
     hooks = CrawlHooks(on_checkpoint=_checkpoint if args.state else None)
     out_urls = None
     out_flags = None
@@ -215,7 +246,18 @@ def main(argv: list[str] | None = None) -> int:
             out_urls = _open_output(args.out_urls, append=bool(args.append_output))
 
             def _on_event(ev: dict[str, object]) -> None:
+                _count_event(ev)
                 out_urls.write(json.dumps(ev, sort_keys=True) + "\n")
+
+            hooks = CrawlHooks(
+                on_event=_on_event,
+                on_flag=hooks.on_flag,
+                on_checkpoint=hooks.on_checkpoint,
+            )
+        elif args.summary_json:
+            # If the caller wants a summary, count events even when not writing JSONL events.
+            def _on_event(ev: dict[str, object]) -> None:
+                _count_event(ev)
 
             hooks = CrawlHooks(
                 on_event=_on_event,
@@ -243,8 +285,10 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     status = 0
+    err_msg: str | None = None
+    t0 = time.monotonic()
     try:
-        seen, flags = crawl(
+        _ = crawl(
             config,
             session=session,
             hooks=hooks,
@@ -255,8 +299,10 @@ def main(argv: list[str] | None = None) -> int:
         status = 130
     except Exception as e:
         print(f"error: crawl failed: {e}", file=sys.stderr)
+        err_msg = str(e)
         status = 1
     finally:
+        elapsed_s = time.monotonic() - t0
         if args.state and crawl_state is not None:
             try:
                 save_state(
@@ -268,15 +314,67 @@ def main(argv: list[str] | None = None) -> int:
             except Exception as e:
                 print(f"error: failed to save state: {e}", file=sys.stderr)
                 status = status or 1
+                if err_msg is None:
+                    err_msg = f"failed to save state: {e}"
         if out_urls:
             out_urls.close()
         if out_flags:
             out_flags.close()
 
+        if args.summary_json:
+            if status == 130:
+                reason = "interrupt"
+            elif status != 0:
+                reason = "error"
+            elif crawl_state.pages_fetched >= config.max_pages:
+                reason = "max_pages"
+            elif len(crawl_state.flags) >= config.max_flags:
+                reason = "max_flags"
+            elif not crawl_state.frontier:
+                reason = "frontier_empty"
+            else:
+                reason = "completed"
+
+            summary: dict[str, object] = {
+                "allowed_hosts": sorted(allowed_hosts) if allowed_hosts is not None else None,
+                "elapsed_s": round(elapsed_s, 3),
+                "error": err_msg,
+                "events": dict(sorted(event_counts.items())) if event_counts else {},
+                "exit_code": status,
+                "flags_found": len(crawl_state.flags),
+                "frontier_remaining": len(crawl_state.frontier),
+                "max_flags": config.max_flags,
+                "max_pages": config.max_pages,
+                "pages_fetched": crawl_state.pages_fetched,
+                "seen": len(crawl_state.seen),
+                "start_urls": list(config.start_urls),
+                "terminated_reason": reason,
+            }
+
+            line = json.dumps(summary, sort_keys=True) + "\n"
+            dest = str(args.summary_json)
+            try:
+                if dest == "stderr":
+                    sys.stderr.write(line)
+                    sys.stderr.flush()
+                elif dest == "-":
+                    sys.stdout.write(line)
+                    sys.stdout.flush()
+                else:
+                    p = Path(dest)
+                    mode = "a" if bool(args.append_output) else "x"
+                    with p.open(mode, encoding="utf-8", newline="\n") as f:
+                        f.write(line)
+            except Exception as e:
+                print(f"error: failed to write summary json: {e}", file=sys.stderr)
+                status = status or 1
+
     if status != 0:
         return status
 
-    logging.getLogger(__name__).info("done pages=%s flags=%s", len(seen), len(flags))
+    logging.getLogger(__name__).info(
+        "done pages=%s flags=%s", crawl_state.pages_fetched, len(crawl_state.flags)
+    )
     return 0
 
 

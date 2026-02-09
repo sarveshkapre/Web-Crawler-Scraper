@@ -57,6 +57,13 @@ class CrawlState:
     pages_fetched: int = 0
 
 
+@dataclass(frozen=True)
+class CrawlResult:
+    seen: set[str]
+    flags: set[str]
+    pages_fetched: int
+
+
 class RobotsCache:
     def __init__(self) -> None:
         self._parsers: dict[str, RobotFileParser] = {}
@@ -225,7 +232,7 @@ def crawl(
     hooks: CrawlHooks | None = None,
     state: CrawlState | None = None,
     checkpoint_every: int = 0,
-) -> tuple[set[str], set[str]]:
+) -> CrawlResult:
     robots = RobotsCache()
     st = state or CrawlState(
         frontier=deque(normalize_url(u) for u in config.start_urls),
@@ -366,7 +373,7 @@ def crawl(
 
         _maybe_checkpoint()
 
-    return st.seen, st.flags
+    return CrawlResult(seen=set(st.seen), flags=set(st.flags), pages_fetched=int(st.pages_fetched))
 
 
 def iter_extracted_links(html: str, *, base_url: str) -> Iterable[str]:

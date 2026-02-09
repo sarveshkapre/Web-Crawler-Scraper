@@ -74,6 +74,26 @@ webcrawler --start-url https://example.com --extract-secret-flags --out-flags fl
 
 If output files already exist, `webcrawler` fails by default. Use `--append-output` to append.
 
+## Summary JSON (Optional)
+Emit a one-line JSON crawl summary at the end of the run:
+```bash
+webcrawler --start-url https://example.com --max-pages 200 --summary-json
+```
+
+By default, the summary is written to stderr so it doesn't interfere with flag extraction on stdout.
+To write to a file:
+```bash
+webcrawler --start-url https://example.com --summary-json summary.jsonl
+```
+
+Use `--append-output` to append an additional summary line to an existing summary file.
+
+## Exit Codes
+- `0`: success
+- `1`: runtime error (login/crawl/state I/O failure)
+- `2`: usage/config error (bad flags, missing required inputs, output file already exists)
+- `130`: interrupted (Ctrl-C)
+
 ## Persistence / Resume (Optional)
 Persist crawl state (frontier + visited) to a JSON file:
 ```bash
