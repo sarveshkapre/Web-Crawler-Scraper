@@ -123,8 +123,6 @@ def main(argv: list[str] | None = None) -> int:
         max_pages=args.max_pages,
         delay_s=args.delay,
         robots_obey=bool(args.robots),
-        max_retries=args.max_retries,
-        backoff_factor=args.backoff,
         extract_secret_flags=bool(args.extract_secret_flags),
         max_flags=args.max_flags,
     )

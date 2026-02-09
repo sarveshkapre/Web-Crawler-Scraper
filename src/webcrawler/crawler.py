@@ -32,8 +32,6 @@ class CrawlConfig:
     max_pages: int
     delay_s: float
     robots_obey: bool
-    max_retries: int
-    backoff_factor: float
     extract_secret_flags: bool
     max_flags: int
 

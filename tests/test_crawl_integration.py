@@ -94,8 +94,6 @@ def test_crawl_obeys_robots_and_handles_redirects() -> None:
             max_pages=50,
             delay_s=0.0,
             robots_obey=True,
-            max_retries=0,
-            backoff_factor=0.0,
             extract_secret_flags=True,
             max_flags=10,
         )
@@ -117,4 +115,3 @@ def test_crawl_obeys_robots_and_handles_redirects() -> None:
         assert any(u.endswith("/") for u in seen)
     finally:
         server.shutdown()
-
