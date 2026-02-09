@@ -61,6 +61,19 @@ webcrawler --start-url https://example.com --extract-secret-flags --max-flags 5
 
 Flags are printed to stdout (one per line). Logs go to stderr.
 
+## Structured Outputs (Optional)
+Write crawl fetch events as JSONL:
+```bash
+webcrawler --start-url https://example.com --max-pages 200 --out-urls urls.jsonl
+```
+
+Write extracted flags to a file (still prints flags to stdout for compatibility):
+```bash
+webcrawler --start-url https://example.com --extract-secret-flags --out-flags flags.txt
+```
+
+If output files already exist, `webcrawler` fails by default. Use `--append-output` to append.
+
 ## Development
 ```bash
 make lint

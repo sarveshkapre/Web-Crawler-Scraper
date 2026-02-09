@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
+from pathlib import Path
 
-from .crawler import CrawlConfig, build_session, crawl, login_with_hidden_fields
+from .crawler import CrawlConfig, CrawlHooks, build_session, crawl, login_with_hidden_fields
 from .urltools import host_for_url, normalize_url
 
 
@@ -59,6 +61,16 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--max-flags", type=int, default=5, help="Stop after finding this many flags.")
 
+    p.add_argument("--out-urls", help="Write JSONL fetch events to this path (optional).")
+    p.add_argument(
+        "--out-flags", help="Write extracted flags (one per line) to this path (optional)."
+    )
+    p.add_argument(
+        "--append-output",
+        action="store_true",
+        help="Append to --out-urls/--out-flags if they exist (default: fail if file exists).",
+    )
+
     p.add_argument("-v", "--verbose", action="count", default=0, help="Increase log verbosity.")
     return p
 
@@ -66,6 +78,13 @@ def _build_parser() -> argparse.ArgumentParser:
 def _configure_logging(verbosity: int) -> None:
     level = logging.INFO if verbosity <= 0 else logging.DEBUG
     logging.basicConfig(level=level, format="%(levelname)s %(name)s: %(message)s")
+
+
+def _open_output(path: str, *, append: bool):
+    p = Path(path)
+    mode = "a" if append else "x"
+    # Line-buffer for long crawls so partial outputs survive process termination.
+    return p.open(mode, encoding="utf-8", newline="\n", buffering=1)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -127,10 +146,42 @@ def main(argv: list[str] | None = None) -> int:
         max_flags=args.max_flags,
     )
 
+    hooks = CrawlHooks()
+    out_urls = None
+    out_flags = None
     try:
-        seen, flags = crawl(config, session=session)
+        if args.out_urls:
+            out_urls = _open_output(args.out_urls, append=bool(args.append_output))
+
+            def _on_event(ev: dict[str, object]) -> None:
+                out_urls.write(json.dumps(ev, sort_keys=True) + "\n")
+
+            hooks = CrawlHooks(on_event=_on_event, on_flag=hooks.on_flag)
+
+        if args.out_flags:
+            out_flags = _open_output(args.out_flags, append=bool(args.append_output))
+
+            def _on_flag(flag: str) -> None:
+                out_flags.write(flag + "\n")
+                out_flags.flush()
+
+            hooks = CrawlHooks(on_event=hooks.on_event, on_flag=_on_flag)
+    except FileExistsError as e:
+        print(f"error: output file exists (use --append-output): {e.filename}", file=sys.stderr)
+        return 2
+    except OSError as e:
+        print(f"error: could not open output file: {e}", file=sys.stderr)
+        return 2
+
+    try:
+        seen, flags = crawl(config, session=session, hooks=hooks)
     except KeyboardInterrupt:
         return 130
+    finally:
+        if out_urls:
+            out_urls.close()
+        if out_flags:
+            out_flags.close()
 
     logging.getLogger(__name__).info("done pages=%s flags=%s", len(seen), len(flags))
     return 0

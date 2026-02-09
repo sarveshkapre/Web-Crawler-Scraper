@@ -4,7 +4,7 @@ import logging
 import re
 import time
 from collections import deque
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 from urllib.robotparser import RobotFileParser
@@ -34,6 +34,18 @@ class CrawlConfig:
     robots_obey: bool
     extract_secret_flags: bool
     max_flags: int
+
+
+@dataclass(frozen=True)
+class CrawlHooks:
+    """
+    Optional streaming hooks to keep the crawl engine decoupled from I/O concerns.
+
+    `on_event` receives JSON-serializable dicts suitable for JSONL output.
+    """
+
+    on_event: Callable[[dict[str, object]], None] | None = None
+    on_flag: Callable[[str], None] | None = None
 
 
 class RobotsCache:
@@ -173,7 +185,9 @@ def login_with_hidden_fields(
     return post.url
 
 
-def crawl(config: CrawlConfig, *, session: requests.Session) -> tuple[set[str], set[str]]:
+def crawl(
+    config: CrawlConfig, *, session: requests.Session, hooks: CrawlHooks | None = None
+) -> tuple[set[str], set[str]]:
     robots = RobotsCache()
     frontier = deque(normalize_url(u) for u in config.start_urls)
     seen: set[str] = set()
@@ -216,6 +230,8 @@ def crawl(config: CrawlConfig, *, session: requests.Session) -> tuple[set[str], 
                 session=session, user_agent=config.user_agent, url=url, timeout_s=config.timeout_s
             ):
                 LOG.info("robots: disallowed %s", url)
+                if hooks and hooks.on_event:
+                    hooks.on_event({"type": "robots_disallow", "url": url})
                 seen.add(url)
                 continue
 
@@ -226,6 +242,8 @@ def crawl(config: CrawlConfig, *, session: requests.Session) -> tuple[set[str], 
             resp = session.get(url, timeout=config.timeout_s, allow_redirects=False)
         except requests.RequestException as e:
             LOG.warning("fetch failed url=%s err=%s", url, e)
+            if hooks and hooks.on_event:
+                hooks.on_event({"type": "fetch_error", "url": url, "error": str(e)})
             _record_delay(url)
             continue
 
@@ -235,6 +253,23 @@ def crawl(config: CrawlConfig, *, session: requests.Session) -> tuple[set[str], 
         _record_delay(fetched_url)
 
         status = resp.status_code
+        ctype = (resp.headers.get("Content-Type") or "").lower()
+        if hooks and hooks.on_event:
+            ev: dict[str, object] = {
+                "type": "fetch",
+                "url": url,
+                "fetched_url": fetched_url,
+                "status": status,
+            }
+            if ctype:
+                ev["content_type"] = ctype
+            if 300 <= status < 400:
+                loc = resp.headers.get("Location")
+                if loc:
+                    redir = resolve_and_normalize(loc, base_url=fetched_url)
+                    if redir:
+                        ev["redirect_to"] = redir
+            hooks.on_event(ev)
         LOG.debug("fetched status=%s url=%s", status, fetched_url)
 
         if 300 <= status < 400:
@@ -248,7 +283,6 @@ def crawl(config: CrawlConfig, *, session: requests.Session) -> tuple[set[str], 
         if status >= 400:
             continue
 
-        ctype = (resp.headers.get("Content-Type") or "").lower()
         if "text/html" not in ctype and "application/xhtml+xml" not in ctype:
             continue
 
@@ -263,6 +297,8 @@ def crawl(config: CrawlConfig, *, session: requests.Session) -> tuple[set[str], 
                 if text and text not in flags:
                     flags.add(text)
                     print(text, flush=True)
+                    if hooks and hooks.on_flag:
+                        hooks.on_flag(text)
                     if len(flags) >= config.max_flags:
                         break
 
