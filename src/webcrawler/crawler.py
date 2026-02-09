@@ -46,6 +46,15 @@ class CrawlHooks:
 
     on_event: Callable[[dict[str, object]], None] | None = None
     on_flag: Callable[[str], None] | None = None
+    on_checkpoint: Callable[[CrawlState], None] | None = None
+
+
+@dataclass
+class CrawlState:
+    frontier: deque[str]
+    seen: set[str]
+    flags: set[str]
+    pages_fetched: int = 0
 
 
 class RobotsCache:
@@ -101,8 +110,10 @@ def _parse_crawl_delay(body: str, *, user_agent: str) -> float | None:
     robots.txt is not strictly standardized; treat as a hint.
     """
     ua = user_agent.lower()
-    active_agents: list[str] = []
-    delay: float | None = None
+    agents: list[str] = []
+    saw_directive = False
+    best_delay: float | None = None
+    best_spec = 0  # 2 = exact match, 1 = '*', 0 = none
 
     for raw in body.splitlines():
         line = raw.split("#", 1)[0].strip()
@@ -113,18 +124,40 @@ def _parse_crawl_delay(body: str, *, user_agent: str) -> float | None:
         k, v = (x.strip() for x in line.split(":", 1))
         k = k.lower()
         if k == "user-agent":
-            active_agents = [v.lower()]
+            # Multiple User-agent lines can belong to the same group.
+            # If we already saw directives in the current group, a new User-agent starts a new
+            # group.
+            if saw_directive:
+                agents = []
+                saw_directive = False
+            agents.append(v.lower())
             continue
-        if k == "crawl-delay":
-            if not active_agents:
-                continue
-            if "*" not in active_agents and ua not in active_agents:
-                continue
-            try:
-                delay = float(v)
-            except ValueError:
-                continue
-    return delay
+
+        if not agents:
+            continue
+        saw_directive = True
+
+        if k != "crawl-delay":
+            continue
+
+        spec = 0
+        if ua in agents:
+            spec = 2
+        elif "*" in agents:
+            spec = 1
+        else:
+            continue
+
+        try:
+            d = float(v)
+        except ValueError:
+            continue
+
+        if spec > best_spec or spec == best_spec:
+            best_delay = d
+            best_spec = spec
+
+    return best_delay
 
 
 def build_session(*, user_agent: str, max_retries: int, backoff_factor: float) -> requests.Session:
@@ -186,16 +219,33 @@ def login_with_hidden_fields(
 
 
 def crawl(
-    config: CrawlConfig, *, session: requests.Session, hooks: CrawlHooks | None = None
+    config: CrawlConfig,
+    *,
+    session: requests.Session,
+    hooks: CrawlHooks | None = None,
+    state: CrawlState | None = None,
+    checkpoint_every: int = 0,
 ) -> tuple[set[str], set[str]]:
     robots = RobotsCache()
-    frontier = deque(normalize_url(u) for u in config.start_urls)
-    seen: set[str] = set()
-    flags: set[str] = set()
-    pages_fetched = 0
+    st = state or CrawlState(
+        frontier=deque(normalize_url(u) for u in config.start_urls),
+        seen=set(),
+        flags=set(),
+        pages_fetched=0,
+    )
 
     # Per-host pacing.
     next_ok_at: dict[str, float] = {}
+
+    def _maybe_checkpoint() -> None:
+        if (
+            hooks
+            and hooks.on_checkpoint
+            and checkpoint_every > 0
+            and st.pages_fetched > 0
+            and st.pages_fetched % checkpoint_every == 0
+        ):
+            hooks.on_checkpoint(st)
 
     def _sleep_if_needed(url: str) -> None:
         host = urlsplit(url).netloc.lower()
@@ -216,11 +266,11 @@ def crawl(
             return
         next_ok_at[host] = time.monotonic() + delay
 
-    while frontier and pages_fetched < config.max_pages and len(flags) < config.max_flags:
-        url = frontier.popleft()
+    while st.frontier and st.pages_fetched < config.max_pages and len(st.flags) < config.max_flags:
+        url = st.frontier.popleft()
         url = normalize_url(url)
 
-        if url in seen:
+        if url in st.seen:
             continue
         if not is_allowed_host(url, config.allowed_hosts):
             continue
@@ -232,10 +282,11 @@ def crawl(
                 LOG.info("robots: disallowed %s", url)
                 if hooks and hooks.on_event:
                     hooks.on_event({"type": "robots_disallow", "url": url})
-                seen.add(url)
+                st.seen.add(url)
                 continue
 
-        seen.add(url)  # Claim before fetching to avoid duplicate work if it re-enters the frontier.
+        # Claim before fetching to avoid duplicate work if it re-enters the frontier.
+        st.seen.add(url)
         _sleep_if_needed(url)
 
         try:
@@ -247,9 +298,9 @@ def crawl(
             _record_delay(url)
             continue
 
-        pages_fetched += 1
+        st.pages_fetched += 1
         fetched_url = normalize_url(resp.url)
-        seen.add(fetched_url)
+        st.seen.add(fetched_url)
         _record_delay(fetched_url)
 
         status = resp.status_code
@@ -276,30 +327,33 @@ def crawl(
             loc = resp.headers.get("Location")
             if loc:
                 nxt = resolve_and_normalize(loc, base_url=fetched_url)
-                if nxt and nxt not in seen and is_allowed_host(nxt, config.allowed_hosts):
-                    frontier.append(nxt)
+                if nxt and nxt not in st.seen and is_allowed_host(nxt, config.allowed_hosts):
+                    st.frontier.append(nxt)
+            _maybe_checkpoint()
             continue
 
         if status >= 400:
+            _maybe_checkpoint()
             continue
 
         if "text/html" not in ctype and "application/xhtml+xml" not in ctype:
+            _maybe_checkpoint()
             continue
 
         soup = BeautifulSoup(resp.text, "html.parser")
 
-        if config.extract_secret_flags and len(flags) < config.max_flags:
+        if config.extract_secret_flags and len(st.flags) < config.max_flags:
             for h2 in soup.find_all("h2", {"class": "secret_flag"}):
                 text = h2.get_text(strip=True)
                 if not text:
                     continue
                 text = _FLAG_PREFIX_RE.sub("", text)
-                if text and text not in flags:
-                    flags.add(text)
+                if text and text not in st.flags:
+                    st.flags.add(text)
                     print(text, flush=True)
                     if hooks and hooks.on_flag:
                         hooks.on_flag(text)
-                    if len(flags) >= config.max_flags:
+                    if len(st.flags) >= config.max_flags:
                         break
 
         for a in soup.find_all("a"):
@@ -307,10 +361,12 @@ def crawl(
             nxt = resolve_and_normalize(href, base_url=fetched_url)
             if not nxt:
                 continue
-            if nxt not in seen and is_allowed_host(nxt, config.allowed_hosts):
-                frontier.append(nxt)
+            if nxt not in st.seen and is_allowed_host(nxt, config.allowed_hosts):
+                st.frontier.append(nxt)
 
-    return seen, flags
+        _maybe_checkpoint()
+
+    return st.seen, st.flags
 
 
 def iter_extracted_links(html: str, *, base_url: str) -> Iterable[str]:

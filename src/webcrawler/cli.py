@@ -4,9 +4,18 @@ import argparse
 import json
 import logging
 import sys
+from collections import deque
 from pathlib import Path
 
-from .crawler import CrawlConfig, CrawlHooks, build_session, crawl, login_with_hidden_fields
+from .crawler import (
+    CrawlConfig,
+    CrawlHooks,
+    CrawlState,
+    build_session,
+    crawl,
+    login_with_hidden_fields,
+)
+from .state import load_state, save_state
 from .urltools import host_for_url, normalize_url
 
 
@@ -71,6 +80,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Append to --out-urls/--out-flags if they exist (default: fail if file exists).",
     )
 
+    p.add_argument("--state", help="Persist crawl state (frontier/visited) to this JSON file.")
+    p.add_argument("--resume", action="store_true", help="Resume from an existing --state file.")
+    p.add_argument(
+        "--checkpoint-every",
+        type=int,
+        default=50,
+        help="Save --state every N fetched pages (0 disables periodic checkpoint).",
+    )
+
     p.add_argument("-v", "--verbose", action="count", default=0, help="Increase log verbosity.")
     return p
 
@@ -123,16 +141,54 @@ def main(argv: list[str] | None = None) -> int:
         if not start_urls:
             start_urls = [final]
 
-    if not start_urls:
+    persisted = None
+    crawl_state = None
+    if args.state:
+        p = Path(args.state)
+        if p.exists():
+            if not args.resume:
+                print("error: --state file exists; use --resume to continue.", file=sys.stderr)
+                return 2
+            try:
+                persisted = load_state(p)
+            except Exception as e:
+                print(f"error: failed to load state: {e}", file=sys.stderr)
+                return 1
+            crawl_state = persisted.state
+            # Optionally seed extra start URLs into the frontier for convenience.
+            for u in start_urls:
+                if u not in crawl_state.seen:
+                    crawl_state.frontier.append(u)
+            if not start_urls:
+                start_urls = list(persisted.start_urls)
+        else:
+            if args.resume:
+                print("error: --resume requires an existing --state file.", file=sys.stderr)
+                return 2
+
+    if not start_urls and not crawl_state:
         print(
-            "error: at least one --start-url is required (or provide --login-url).",
+            "error: at least one --start-url is required "
+            "(or provide --login-url, or use --resume).",
             file=sys.stderr,
         )
         return 2
 
     allowed_hosts = set(h.lower() for h in args.allowed_domain) if args.allowed_domain else None
     if allowed_hosts is None:
-        allowed_hosts = {host_for_url(u) for u in start_urls}
+        if start_urls:
+            allowed_hosts = {host_for_url(u) for u in start_urls}
+        elif persisted is not None:
+            allowed_hosts = persisted.allowed_hosts
+
+    if args.state and crawl_state is None:
+        # New persisted crawl: initialize state explicitly so it can be checkpointed.
+        crawl_state = CrawlState(
+            frontier=deque(start_urls),
+            seen=set(),
+            flags=set(),
+            pages_fetched=0,
+        )
 
     config = CrawlConfig(
         start_urls=tuple(start_urls),
@@ -146,7 +202,12 @@ def main(argv: list[str] | None = None) -> int:
         max_flags=args.max_flags,
     )
 
-    hooks = CrawlHooks()
+    def _checkpoint(st: CrawlState) -> None:
+        if not args.state:
+            return
+        save_state(args.state, state=st, start_urls=config.start_urls, allowed_hosts=allowed_hosts)
+
+    hooks = CrawlHooks(on_checkpoint=_checkpoint if args.state else None)
     out_urls = None
     out_flags = None
     try:
@@ -156,7 +217,11 @@ def main(argv: list[str] | None = None) -> int:
             def _on_event(ev: dict[str, object]) -> None:
                 out_urls.write(json.dumps(ev, sort_keys=True) + "\n")
 
-            hooks = CrawlHooks(on_event=_on_event, on_flag=hooks.on_flag)
+            hooks = CrawlHooks(
+                on_event=_on_event,
+                on_flag=hooks.on_flag,
+                on_checkpoint=hooks.on_checkpoint,
+            )
 
         if args.out_flags:
             out_flags = _open_output(args.out_flags, append=bool(args.append_output))
@@ -165,7 +230,11 @@ def main(argv: list[str] | None = None) -> int:
                 out_flags.write(flag + "\n")
                 out_flags.flush()
 
-            hooks = CrawlHooks(on_event=hooks.on_event, on_flag=_on_flag)
+            hooks = CrawlHooks(
+                on_event=hooks.on_event,
+                on_flag=_on_flag,
+                on_checkpoint=hooks.on_checkpoint,
+            )
     except FileExistsError as e:
         print(f"error: output file exists (use --append-output): {e.filename}", file=sys.stderr)
         return 2
@@ -173,15 +242,39 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: could not open output file: {e}", file=sys.stderr)
         return 2
 
+    status = 0
     try:
-        seen, flags = crawl(config, session=session, hooks=hooks)
+        seen, flags = crawl(
+            config,
+            session=session,
+            hooks=hooks,
+            state=crawl_state,
+            checkpoint_every=int(args.checkpoint_every or 0),
+        )
     except KeyboardInterrupt:
-        return 130
+        status = 130
+    except Exception as e:
+        print(f"error: crawl failed: {e}", file=sys.stderr)
+        status = 1
     finally:
+        if args.state and crawl_state is not None:
+            try:
+                save_state(
+                    args.state,
+                    state=crawl_state,
+                    start_urls=config.start_urls,
+                    allowed_hosts=allowed_hosts,
+                )
+            except Exception as e:
+                print(f"error: failed to save state: {e}", file=sys.stderr)
+                status = status or 1
         if out_urls:
             out_urls.close()
         if out_flags:
             out_flags.close()
+
+    if status != 0:
+        return status
 
     logging.getLogger(__name__).info("done pages=%s flags=%s", len(seen), len(flags))
     return 0

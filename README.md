@@ -74,6 +74,19 @@ webcrawler --start-url https://example.com --extract-secret-flags --out-flags fl
 
 If output files already exist, `webcrawler` fails by default. Use `--append-output` to append.
 
+## Persistence / Resume (Optional)
+Persist crawl state (frontier + visited) to a JSON file:
+```bash
+webcrawler --start-url https://example.com --state crawl_state.json
+```
+
+Resume later (outputs should generally use `--append-output` when resuming):
+```bash
+webcrawler --state crawl_state.json --resume --append-output --out-urls urls.jsonl
+```
+
+By default, state is checkpointed every 50 fetched pages; configure via `--checkpoint-every`.
+
 ## Development
 ```bash
 make lint
