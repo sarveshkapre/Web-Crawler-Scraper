@@ -11,18 +11,25 @@
 - [ ] **P1: Automation-grade exit codes + summary** (Impact 4, Effort 2, Fit 5, Diff 2, Risk 1, Conf 4)
   - Document stable exit codes (usage error vs runtime error vs Ctrl-C).
   - Add `--summary-json` (print crawl stats to stdout/stderr deterministically).
+- [ ] **P1: URL allow/deny filters** (Impact 4, Effort 3, Fit 5, Diff 2, Risk 2, Conf 4)
+  - Add `--include-regex` / `--exclude-regex` applied to normalized URLs.
 - [ ] **P2: Sitemap seeding** (Impact 3, Effort 3, Fit 4, Diff 2, Risk 2, Conf 3)
   - Add `--sitemap-url` (repeatable) and/or auto-discover `/sitemap.xml` when same-host.
-- [ ] **P2: URL allow/deny filters** (Impact 4, Effort 3, Fit 4, Diff 2, Risk 2, Conf 3)
-  - Add `--include-regex` / `--exclude-regex` applied to normalized URLs.
 - [ ] **P2: Concurrency + polite throttling** (Impact 4, Effort 4, Fit 4, Diff 2, Risk 3, Conf 3)
   - Optional parallel fetch with per-host caps + backpressure; keep robots/pacing correct.
+- [ ] **P2: Optional tracking-param stripping** (Impact 3, Effort 2, Fit 4, Diff 2, Risk 2, Conf 3)
+  - Add `--strip-query-param utm_source` (repeatable) and/or `--strip-utm` convenience.
+  - Apply before normalization/dedupe to reduce duplicate crawl work.
 - [ ] **P3: HTTP cache / conditional GET** (Impact 3, Effort 4, Fit 3, Diff 2, Risk 3, Conf 2)
   - Support `ETag`/`If-Modified-Since` to reduce refetching on repeated crawls.
 - [ ] **P3: Extraction rules engine** (Impact 3, Effort 4, Fit 3, Diff 4, Risk 3, Conf 2)
   - CSS selectors via config file; emit extracted fields to JSONL.
 - [ ] **P3: Optional JS rendering mode** (Impact 3, Effort 5, Fit 2, Diff 4, Risk 4, Conf 2)
   - Optional Playwright-powered fetcher for JS-heavy pages (explicit opt-in).
+- [ ] **P3: Duplicate-content suppression** (Impact 2, Effort 3, Fit 3, Diff 2, Risk 2, Conf 2)
+  - Optional body hashing (for HTML only) to avoid revisiting duplicate pages under multiple URLs.
+- [ ] **P3: Hard politeness mode** (Impact 2, Effort 2, Fit 3, Diff 2, Risk 2, Conf 2)
+  - Add `--robots-fail-closed` to stop on robots fetch/parse failures (default remains fail-open).
 
 ## Implemented
 - [x] 2026-02-09: Structured outputs for automation (`--out-urls` JSONL events, `--out-flags`, `--append-output`). Evidence: `src/webcrawler/cli.py`, `src/webcrawler/crawler.py`, `tests/test_cli_outputs.py`, `README.md`, `make lint`, `make test`. Commit: `eef8325`.
@@ -53,6 +60,7 @@ https://crawler.archive.org/heritrix.html
 https://www.gnu.org/software/wget/manual/wget.html#Recursive-Retrieval-Options
 https://www.gnu.org/software/wget/manual/html_node/Logging-and-Input-File-Options.html
 https://www.gnu.org/software/wget/manual/html_node/Download-Options.html
+https://www.gnu.org/software/wget/manual/html_node/Exit-Status.html
 https://docs.python.org/3/library/urllib.robotparser.html
 ```
 
