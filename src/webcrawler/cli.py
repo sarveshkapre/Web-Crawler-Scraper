@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
 import sys
 import time
 from collections import deque
@@ -57,6 +58,19 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--user-agent", default="webcrawler-scraper/0.1", help="HTTP User-Agent.")
     p.add_argument("--max-retries", type=int, default=2, help="Retry count for transient failures.")
     p.add_argument("--backoff", type=float, default=0.5, help="Retry backoff factor.")
+
+    p.add_argument(
+        "--include-regex",
+        action="append",
+        default=[],
+        help="Only crawl URLs whose normalized form matches at least one regex (repeatable).",
+    )
+    p.add_argument(
+        "--exclude-regex",
+        action="append",
+        default=[],
+        help="Skip URLs whose normalized form matches any regex (repeatable).",
+    )
 
     p.add_argument("--login-url", help="Login URL for form-based auth (optional).")
     p.add_argument("--username", help="Username for login (optional).")
@@ -126,6 +140,29 @@ def main(argv: list[str] | None = None) -> int:
 
     start_urls = [normalize_url(u) for u in args.start_url]
 
+    include_patterns = []
+    for pat in args.include_regex or []:
+        try:
+            include_patterns.append(re.compile(pat))
+        except re.error as e:
+            print(f"error: invalid --include-regex pattern {pat!r}: {e}", file=sys.stderr)
+            return 2
+
+    exclude_patterns = []
+    for pat in args.exclude_regex or []:
+        try:
+            exclude_patterns.append(re.compile(pat))
+        except re.error as e:
+            print(f"error: invalid --exclude-regex pattern {pat!r}: {e}", file=sys.stderr)
+            return 2
+
+    def _url_allowed(u: str) -> bool:
+        if include_patterns and not any(r.search(u) for r in include_patterns):
+            return False
+        if exclude_patterns and any(r.search(u) for r in exclude_patterns):
+            return False
+        return True
+
     user = args.username or args.pos_username
     pwd = args.password or args.pos_password
 
@@ -189,6 +226,10 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
+    if start_urls and any(not _url_allowed(u) for u in start_urls):
+        print("error: --start-url is excluded by --include-regex/--exclude-regex.", file=sys.stderr)
+        return 2
+
     allowed_hosts = set(h.lower() for h in args.allowed_domain) if args.allowed_domain else None
     if allowed_hosts is None:
         if start_urls:
@@ -224,6 +265,8 @@ def main(argv: list[str] | None = None) -> int:
         robots_obey=bool(args.robots),
         extract_secret_flags=bool(args.extract_secret_flags),
         max_flags=args.max_flags,
+        include_patterns=tuple(include_patterns),
+        exclude_patterns=tuple(exclude_patterns),
     )
 
     def _checkpoint(st: CrawlState) -> None:

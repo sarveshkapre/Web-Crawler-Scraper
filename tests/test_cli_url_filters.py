@@ -3,22 +3,14 @@ from __future__ import annotations
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from webcrawler.crawler import CrawlConfig, build_session, crawl
+from webcrawler.cli import main
 
 
 class _Handler(BaseHTTPRequestHandler):
-    counts: dict[str, int] = {}
-
     def log_message(self, fmt: str, *args: object) -> None:  # noqa: N802
-        # Keep tests quiet.
         return
 
-    def _count(self) -> None:
-        self.counts[self.path] = self.counts.get(self.path, 0) + 1
-
     def do_GET(self) -> None:  # noqa: N802
-        self._count()
-
         if self.path == "/robots.txt":
             body = "User-agent: *\nDisallow: /private\n"
             self.send_response(200)
@@ -26,12 +18,6 @@ class _Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body.encode("utf-8"))
-            return
-
-        if self.path == "/redir":
-            self.send_response(302)
-            self.send_header("Location", "/page2")
-            self.end_headers()
             return
 
         if self.path == "/private":
@@ -47,8 +33,6 @@ class _Handler(BaseHTTPRequestHandler):
             body = (
                 "<html><body>"
                 "<a href='/page1'>p1</a>"
-                "<a href='/private'>private</a>"
-                "<a href='/redir'>redir</a>"
                 "<h2 class='secret_flag'>FLAG: ONE</h2>"
                 "</body></html>"
             )
@@ -81,39 +65,55 @@ def _start_server() -> tuple[ThreadingHTTPServer, str]:
     return server, f"http://{host}:{port}"
 
 
-def test_crawl_obeys_robots_and_handles_redirects() -> None:
-    _Handler.counts = {}
+def test_cli_exclude_regex_prevents_crawling_matching_urls(capsys) -> None:
     server, base = _start_server()
     try:
-        session = build_session(user_agent="webcrawler-test/1.0", max_retries=0, backoff_factor=0.0)
-        config = CrawlConfig(
-            start_urls=(f"{base}/",),
-            allowed_hosts=None,
-            user_agent="webcrawler-test/1.0",
-            timeout_s=2.0,
-            max_pages=50,
-            delay_s=0.0,
-            robots_obey=True,
-            extract_secret_flags=True,
-            max_flags=10,
-            include_patterns=(),
-            exclude_patterns=(),
+        code = main(
+            [
+                "--start-url",
+                f"{base}/",
+                "--max-pages",
+                "50",
+                "--extract-secret-flags",
+                "--max-flags",
+                "10",
+                "--exclude-regex",
+                r"/page2$",
+            ]
         )
-        result = crawl(config, session=session)
-
-        assert {"ONE", "TWO", "THREE"} <= result.flags
-        assert "SHOULD_NOT_SEE" not in result.flags
-
-        # Redirect requested and target fetched eventually.
-        assert _Handler.counts.get("/redir", 0) == 1
-        assert _Handler.counts.get("/page2", 0) >= 1
-
-        # Disallowed page should not be fetched.
-        assert _Handler.counts.get("/private", 0) == 0
-
-        # robots.txt must be fetched at least once.
-        assert _Handler.counts.get("/robots.txt", 0) >= 1
-
-        assert any(u.endswith("/") for u in result.seen)
+        assert code == 0
     finally:
         server.shutdown()
+
+    stdout_flags = {ln.strip() for ln in capsys.readouterr().out.splitlines() if ln.strip()}
+    assert {"ONE", "TWO"} <= stdout_flags
+    assert "THREE" not in stdout_flags
+
+
+def test_cli_include_regex_whitelists_urls(capsys) -> None:
+    server, base = _start_server()
+    try:
+        code = main(
+            [
+                "--start-url",
+                f"{base}/",
+                "--max-pages",
+                "50",
+                "--extract-secret-flags",
+                "--max-flags",
+                "10",
+                # Allow only the start page and /page1.
+                "--include-regex",
+                r"/$",
+                "--include-regex",
+                r"/page1$",
+            ]
+        )
+        assert code == 0
+    finally:
+        server.shutdown()
+
+    stdout_flags = {ln.strip() for ln in capsys.readouterr().out.splitlines() if ln.strip()}
+    assert {"ONE", "TWO"} <= stdout_flags
+    assert "THREE" not in stdout_flags
+

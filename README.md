@@ -38,6 +38,17 @@ Add a per-host delay:
 webcrawler --start-url https://example.com --delay 0.25
 ```
 
+## URL Filters (Optional)
+Include only URLs that match one or more regex patterns:
+```bash
+webcrawler --start-url https://example.com --include-regex '/docs/' --include-regex '/blog/'
+```
+
+Exclude URLs that match any regex pattern:
+```bash
+webcrawler --start-url https://example.com --exclude-regex '\\.pdf$' --exclude-regex '/logout'
+```
+
 ## Login (Optional)
 If you need a basic form-based login, provide `--login-url` and credentials. The crawler will:
 1. GET the login page

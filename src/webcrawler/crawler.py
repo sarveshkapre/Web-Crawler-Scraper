@@ -34,6 +34,8 @@ class CrawlConfig:
     robots_obey: bool
     extract_secret_flags: bool
     max_flags: int
+    include_patterns: tuple[re.Pattern, ...] = ()
+    exclude_patterns: tuple[re.Pattern, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -244,6 +246,15 @@ def crawl(
     # Per-host pacing.
     next_ok_at: dict[str, float] = {}
 
+    def _url_allowed(url: str) -> tuple[bool, str | None]:
+        if config.include_patterns:
+            if not any(r.search(url) for r in config.include_patterns):
+                return False, "include_mismatch"
+        if config.exclude_patterns:
+            if any(r.search(url) for r in config.exclude_patterns):
+                return False, "exclude_match"
+        return True, None
+
     def _maybe_checkpoint() -> None:
         if (
             hooks
@@ -280,6 +291,12 @@ def crawl(
         if url in st.seen:
             continue
         if not is_allowed_host(url, config.allowed_hosts):
+            continue
+        ok, reason = _url_allowed(url)
+        if not ok:
+            if hooks and hooks.on_event:
+                hooks.on_event({"type": "filtered", "url": url, "reason": reason or "filtered"})
+            st.seen.add(url)
             continue
 
         if config.robots_obey:
@@ -334,7 +351,12 @@ def crawl(
             loc = resp.headers.get("Location")
             if loc:
                 nxt = resolve_and_normalize(loc, base_url=fetched_url)
-                if nxt and nxt not in st.seen and is_allowed_host(nxt, config.allowed_hosts):
+                if (
+                    nxt
+                    and nxt not in st.seen
+                    and is_allowed_host(nxt, config.allowed_hosts)
+                    and _url_allowed(nxt)[0]
+                ):
                     st.frontier.append(nxt)
             _maybe_checkpoint()
             continue
@@ -368,7 +390,11 @@ def crawl(
             nxt = resolve_and_normalize(href, base_url=fetched_url)
             if not nxt:
                 continue
-            if nxt not in st.seen and is_allowed_host(nxt, config.allowed_hosts):
+            if (
+                nxt not in st.seen
+                and is_allowed_host(nxt, config.allowed_hosts)
+                and _url_allowed(nxt)[0]
+            ):
                 st.frontier.append(nxt)
 
         _maybe_checkpoint()
