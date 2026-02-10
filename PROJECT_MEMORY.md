@@ -15,10 +15,11 @@
 
 ## Open Problems
 - No concurrency (single-threaded fetch loop).
-- No max depth / hop limit yet.
 
 ## Recent Decisions
 - Template: YYYY-MM-DD | Decision | Why | Evidence (tests/logs) | Commit | Confidence (high/medium/low) | Trust (trusted/untrusted)
+- 2026-02-10 | Add `--max-depth` hop limit + persist hop depths in state v2 | Depth limits are a core crawl control to bound traversal; persisting depth preserves semantics across resume/checkpoint runs | `make lint`, `make test`, `make smoke`, new max-depth + sitemap depth tests, GitHub Actions CI success | 6600ade | high | trusted
+- 2026-02-10 | Add `--robots-fail-closed` hard politeness mode | Some controlled environments prefer failing closed when robots.txt is unavailable, preventing accidental non-compliance | `make lint`, `make test`, new robots fail-closed test, GitHub Actions CI success | 6600ade | high | trusted
 - 2026-02-09 | Add sitemap seeding (`--sitemap-url`, `--sitemap-auto`, `--sitemap-from-robots`) | Helps find pages that are not discoverable via link traversal; keeps crawler useful on sites with sparse navigation | `make lint`, `make test`, `make smoke`, new sitemap seeding tests, GitHub Actions CI success | 7e96dc2 | high | trusted
 - 2026-02-09 | Add optional tracking-param stripping (`--strip-query-param`, `--strip-utm`) applied before dedupe | Reduces duplicated crawl work caused by analytics query params; improves crawl coverage under a fixed max-pages budget | `make lint`, `make test`, `make smoke`, new CLI + urltools tests, GitHub Actions CI success | 603971c | high | trusted
 - 2026-02-09 | Port crawler to Python 3 with a modular CLI + package | Python 2-only script was not runnable in current environments; modern CLI enables safe crawl controls and testability | `make lint`, `make test`, local CLI smoke crawl (flags extracted) | f6b2d7d, 0eb1f7c | high | trusted
@@ -35,11 +36,15 @@
 
 ## Next Prioritized Tasks
 - P2: Concurrency with per-host caps + politeness defaults.
-- P2: Max depth / hop limit to bound traversal.
-- P3: Hard politeness mode (`--robots-fail-closed`) for controlled environments.
+- P3: Retry-on-exception with cap.
+- P3: Response size cap (`--max-body-bytes`).
 
 ## Verification Evidence
 - Template: YYYY-MM-DD | Command | Key output | Status (pass/fail)
+- 2026-02-10 | `. .venv/bin/activate && make lint` | `All checks passed!` | pass
+- 2026-02-10 | `. .venv/bin/activate && make test` | `22 passed` | pass
+- 2026-02-10 | `. .venv/bin/activate && make smoke` | `exit_code=0 stdout_flags=['SMOKE_ONE','SMOKE_TWO']` | pass
+- 2026-02-10 | `gh run watch 21847423285 --interval 5 --exit-status` | `CI completed success` | pass
 - 2026-02-09 | `. .venv/bin/activate && make lint` | `All checks passed!` | pass
 - 2026-02-09 | `. .venv/bin/activate && make test` | `4 passed` | pass
 - 2026-02-09 | `. .venv/bin/activate && make smoke` | `stdout_flags=['SMOKE_ONE','SMOKE_TWO'] exit_code=0` | pass
