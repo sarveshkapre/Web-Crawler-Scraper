@@ -23,6 +23,11 @@ Crawl a site (defaults to allowed domain(s) derived from `--start-url`):
 webcrawler --start-url https://example.com --max-pages 200
 ```
 
+Bound traversal depth (hop distance from seeds; start URLs and sitemap seeds are depth 0):
+```bash
+webcrawler --start-url https://example.com --max-pages 200 --max-depth 2
+```
+
 Allow multiple domains:
 ```bash
 webcrawler --start-url https://example.com --allowed-domain example.com --allowed-domain www.example.com
@@ -31,6 +36,11 @@ webcrawler --start-url https://example.com --allowed-domain example.com --allowe
 Disable robots.txt (only for controlled environments):
 ```bash
 webcrawler --start-url https://example.com --no-robots
+```
+
+Fail closed on `robots.txt` fetch failures (hard politeness mode):
+```bash
+webcrawler --start-url https://example.com --robots-fail-closed
 ```
 
 Add a per-host delay:

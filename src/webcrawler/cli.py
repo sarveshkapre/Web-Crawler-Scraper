@@ -49,12 +49,23 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Allowed host/domain (repeatable). Defaults to host(s) of start URL(s).",
     )
     p.add_argument("--max-pages", type=int, default=500, help="Maximum pages to fetch.")
+    p.add_argument(
+        "--max-depth",
+        type=int,
+        default=None,
+        help="Maximum hop depth from seeds (0 = only seed URLs; default: unlimited).",
+    )
     p.add_argument("--timeout", type=float, default=10.0, help="Per-request timeout in seconds.")
     p.add_argument(
         "--delay", type=float, default=0.0, help="Minimum delay between requests per host."
     )
     p.add_argument(
         "--robots", action=argparse.BooleanOptionalAction, default=True, help="Obey robots.txt."
+    )
+    p.add_argument(
+        "--robots-fail-closed",
+        action="store_true",
+        help="If robots.txt can't be fetched, disallow crawling that host (default: fail-open).",
     )
 
     p.add_argument("--user-agent", default="webcrawler-scraper/0.1", help="HTTP User-Agent.")
@@ -178,6 +189,10 @@ def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     _configure_logging(args.verbose)
 
+    if args.max_depth is not None and int(args.max_depth) < 0:
+        print("error: --max-depth must be >= 0.", file=sys.stderr)
+        return 2
+
     strip_query_params: set[str] = {
         str(x).strip().lower() for x in (args.strip_query_param or []) if str(x).strip()
     }
@@ -266,12 +281,19 @@ def main(argv: list[str] | None = None) -> int:
             if strip_query_params:
                 # If the caller changes normalization behavior, canonicalize the in-memory state so
                 # dedupe/frontier behavior matches the new config.
-                crawl_state.frontier = deque(_norm(u) for u in crawl_state.frontier)
+                canon = deque()
+                for item in crawl_state.frontier:
+                    if isinstance(item, tuple) and len(item) == 2:
+                        u, d = item
+                        canon.append((_norm(str(u)), int(d)))
+                    else:
+                        canon.append((_norm(str(item)), 0))
+                crawl_state.frontier = canon
                 crawl_state.seen = {_norm(u) for u in crawl_state.seen}
             # Optionally seed extra start URLs into the frontier for convenience.
             for u in start_urls:
                 if u not in crawl_state.seen:
-                    crawl_state.frontier.append(u)
+                    crawl_state.frontier.append((u, 0))
             if not start_urls:
                 start_urls = [_norm(u) for u in persisted.start_urls]
         else:
@@ -301,7 +323,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.state and crawl_state is None:
         # New persisted crawl: initialize state explicitly so it can be checkpointed.
         crawl_state = CrawlState(
-            frontier=deque(start_urls),
+            frontier=deque((u, 0) for u in start_urls),
             seen=set(),
             flags=set(),
             pages_fetched=0,
@@ -310,7 +332,7 @@ def main(argv: list[str] | None = None) -> int:
     if crawl_state is None:
         # Use an explicit state even for non-persisted crawls so we can always emit a summary.
         crawl_state = CrawlState(
-            frontier=deque(start_urls),
+            frontier=deque((u, 0) for u in start_urls),
             seen=set(),
             flags=set(),
             pages_fetched=0,
@@ -322,8 +344,10 @@ def main(argv: list[str] | None = None) -> int:
         user_agent=args.user_agent,
         timeout_s=args.timeout,
         max_pages=args.max_pages,
+        max_depth=args.max_depth if args.max_depth is None else int(args.max_depth),
         delay_s=args.delay,
         robots_obey=bool(args.robots),
+        robots_fail_closed=bool(args.robots_fail_closed),
         extract_secret_flags=bool(args.extract_secret_flags),
         max_flags=args.max_flags,
         include_patterns=tuple(include_patterns),
@@ -443,7 +467,7 @@ def main(argv: list[str] | None = None) -> int:
             added = 0
             for u in seeded:
                 if u not in crawl_state.seen:
-                    crawl_state.frontier.append(u)
+                    crawl_state.frontier.append((u, 0))
                     added += 1
             if hooks.on_event:
                 hooks.on_event(

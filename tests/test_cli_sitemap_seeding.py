@@ -95,6 +95,32 @@ def test_cli_seeds_from_explicit_sitemap_url(capsys) -> None:
     assert {"ONE", "HIDDEN"} <= flags
 
 
+def test_cli_max_depth_0_still_fetches_sitemap_seeds(capsys) -> None:
+    server, base = _start_server()
+    try:
+        code = main(
+            [
+                "--start-url",
+                f"{base}/",
+                "--sitemap-url",
+                f"{base}/sitemap.xml",
+                "--max-depth",
+                "0",
+                "--max-pages",
+                "20",
+                "--extract-secret-flags",
+                "--max-flags",
+                "10",
+            ]
+        )
+        assert code == 0
+    finally:
+        server.shutdown()
+
+    flags = _flags_from_stdout(capsys.readouterr().out)
+    assert {"ONE", "HIDDEN"} <= flags
+
+
 def test_cli_sitemap_auto_discovers_sitemap_xml(capsys) -> None:
     server, base = _start_server()
     try:
@@ -139,4 +165,3 @@ def test_cli_sitemap_from_robots_discovers_sitemap_declarations(capsys) -> None:
 
     flags = _flags_from_stdout(capsys.readouterr().out)
     assert {"ONE", "HIDDEN"} <= flags
-

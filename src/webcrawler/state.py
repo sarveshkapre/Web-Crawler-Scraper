@@ -22,7 +22,8 @@ def load_state(path: str | Path) -> PersistedState:
     data = json.loads(p.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
         raise ValueError("state must be a JSON object")
-    if data.get("version") != 1:
+    ver = int(data.get("version") or 0)
+    if ver not in {1, 2}:
         raise ValueError("unsupported state version")
 
     raw_start = data.get("start_urls") or []
@@ -33,13 +34,45 @@ def load_state(path: str | Path) -> PersistedState:
     if raw_allowed is not None:
         allowed_hosts = {str(x).lower() for x in raw_allowed if str(x).strip()}
 
-    frontier = [normalize_url(u) for u in (data.get("frontier") or [])]
+    frontier_items: list[tuple[str, int]] = []
+    raw_frontier = data.get("frontier") or []
+    if ver == 1:
+        for u in raw_frontier:
+            frontier_items.append((normalize_url(str(u)), 0))
+    else:
+        for item in raw_frontier:
+            if isinstance(item, str):
+                frontier_items.append((normalize_url(item), 0))
+                continue
+            if isinstance(item, dict):
+                u = normalize_url(str(item.get("url") or ""))
+                if not u:
+                    continue
+                try:
+                    d = int(item.get("depth") or 0)
+                except Exception:
+                    d = 0
+                if d < 0:
+                    d = 0
+                frontier_items.append((u, d))
+                continue
+            if isinstance(item, (list, tuple)) and len(item) == 2:
+                u = normalize_url(str(item[0] or ""))
+                if not u:
+                    continue
+                try:
+                    d = int(item[1] or 0)
+                except Exception:
+                    d = 0
+                if d < 0:
+                    d = 0
+                frontier_items.append((u, d))
     seen = {normalize_url(u) for u in (data.get("seen") or [])}
     flags = {str(x) for x in (data.get("flags") or []) if str(x)}
     pages_fetched = int(data.get("pages_fetched") or 0)
 
     st = CrawlState(
-        frontier=deque(frontier),
+        frontier=deque(frontier_items),
         seen=seen,
         flags=flags,
         pages_fetched=pages_fetched,
@@ -57,11 +90,11 @@ def save_state(
     p = Path(path)
     tmp = p.with_suffix(p.suffix + ".tmp")
     payload = {
-        "version": 1,
+        "version": 2,
         "start_urls": list(start_urls),
         "allowed_hosts": sorted(allowed_hosts) if allowed_hosts is not None else None,
         "pages_fetched": state.pages_fetched,
-        "frontier": list(state.frontier),
+        "frontier": [{"url": u, "depth": int(d)} for (u, d) in state.frontier],
         "seen": list(state.seen),
         "flags": sorted(state.flags),
     }

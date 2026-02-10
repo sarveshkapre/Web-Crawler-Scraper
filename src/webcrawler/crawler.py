@@ -34,6 +34,8 @@ class CrawlConfig:
     robots_obey: bool
     extract_secret_flags: bool
     max_flags: int
+    max_depth: int | None = None
+    robots_fail_closed: bool = False
     include_patterns: tuple[re.Pattern, ...] = ()
     exclude_patterns: tuple[re.Pattern, ...] = ()
     strip_query_params: frozenset[str] = frozenset()
@@ -54,7 +56,8 @@ class CrawlHooks:
 
 @dataclass
 class CrawlState:
-    frontier: deque[str]
+    # frontier items are (url, depth) where depth is hop distance from seeds.
+    frontier: deque[tuple[str, int]]
     seen: set[str]
     flags: set[str]
     pages_fetched: int = 0
@@ -73,14 +76,24 @@ class RobotsCache:
         self._crawl_delay: dict[str, float] = {}
 
     def can_fetch(
-        self, *, session: requests.Session, user_agent: str, url: str, timeout_s: float
+        self,
+        *,
+        session: requests.Session,
+        user_agent: str,
+        url: str,
+        timeout_s: float,
+        fail_closed: bool,
     ) -> bool:
         parts = urlsplit(url)
         key = f"{parts.scheme.lower()}://{parts.netloc.lower()}"
         rp = self._parsers.get(key)
         if rp is None:
             rp, crawl_delay = _fetch_robots(
-                session=session, base=key, user_agent=user_agent, timeout_s=timeout_s
+                session=session,
+                base=key,
+                user_agent=user_agent,
+                timeout_s=timeout_s,
+                fail_closed=fail_closed,
             )
             self._parsers[key] = rp
             if crawl_delay is not None:
@@ -94,7 +107,12 @@ class RobotsCache:
 
 
 def _fetch_robots(
-    *, session: requests.Session, base: str, user_agent: str, timeout_s: float
+    *,
+    session: requests.Session,
+    base: str,
+    user_agent: str,
+    timeout_s: float,
+    fail_closed: bool,
 ) -> tuple[RobotFileParser, float | None]:
     robots_url = f"{base}/robots.txt"
     rp = RobotFileParser()
@@ -104,13 +122,15 @@ def _fetch_robots(
     try:
         resp = session.get(robots_url, timeout=timeout_s)
         if resp.status_code >= 400:
-            rp.parse([])
+            # Default: fail-open so the crawler stays useful on hosts with broken robots.
+            # In hard politeness mode, fail-closed and disallow all.
+            rp.parse(["User-agent: *", "Disallow: /"] if fail_closed else [])
             return rp, None
         lines = resp.text.splitlines()
         rp.parse(lines)
         crawl_delay = _parse_crawl_delay(resp.text, user_agent=user_agent)
     except requests.RequestException:
-        rp.parse([])  # fail-open: allow crawling if robots can't be fetched
+        rp.parse(["User-agent: *", "Disallow: /"] if fail_closed else [])
     return rp, crawl_delay
 
 
@@ -239,7 +259,7 @@ def crawl(
     robots = RobotsCache()
     st = state or CrawlState(
         frontier=deque(
-            normalize_url(u, strip_query_params=config.strip_query_params)
+            (normalize_url(u, strip_query_params=config.strip_query_params), 0)
             for u in config.start_urls
         ),
         seen=set(),
@@ -289,7 +309,12 @@ def crawl(
         next_ok_at[host] = time.monotonic() + delay
 
     while st.frontier and st.pages_fetched < config.max_pages and len(st.flags) < config.max_flags:
-        url = st.frontier.popleft()
+        item = st.frontier.popleft()
+        if isinstance(item, tuple) and len(item) == 2:
+            url, depth = item
+            depth = int(depth)
+        else:
+            url, depth = str(item), 0
         url = normalize_url(url, strip_query_params=config.strip_query_params)
 
         if url in st.seen:
@@ -305,7 +330,11 @@ def crawl(
 
         if config.robots_obey:
             if not robots.can_fetch(
-                session=session, user_agent=config.user_agent, url=url, timeout_s=config.timeout_s
+                session=session,
+                user_agent=config.user_agent,
+                url=url,
+                timeout_s=config.timeout_s,
+                fail_closed=bool(config.robots_fail_closed),
             ):
                 LOG.info("robots: disallowed %s", url)
                 if hooks and hooks.on_event:
@@ -339,6 +368,7 @@ def crawl(
                 "url": url,
                 "fetched_url": fetched_url,
                 "status": status,
+                "depth": depth,
             }
             if ctype:
                 ev["content_type"] = ctype
@@ -365,7 +395,7 @@ def crawl(
                     and is_allowed_host(nxt, config.allowed_hosts)
                     and _url_allowed(nxt)[0]
                 ):
-                    st.frontier.append(nxt)
+                    st.frontier.append((nxt, depth))
             _maybe_checkpoint()
             continue
 
@@ -400,12 +430,17 @@ def crawl(
             )
             if not nxt:
                 continue
+            nxt_depth = depth + 1
+            if config.max_depth is not None and nxt_depth > config.max_depth:
+                if hooks and hooks.on_event:
+                    hooks.on_event({"type": "depth_skip", "url": nxt, "from": fetched_url})
+                continue
             if (
                 nxt not in st.seen
                 and is_allowed_host(nxt, config.allowed_hosts)
                 and _url_allowed(nxt)[0]
             ):
-                st.frontier.append(nxt)
+                st.frontier.append((nxt, nxt_depth))
 
         _maybe_checkpoint()
 
