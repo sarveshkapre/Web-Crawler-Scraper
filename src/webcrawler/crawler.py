@@ -34,6 +34,8 @@ class CrawlConfig:
     robots_obey: bool
     extract_secret_flags: bool
     max_flags: int
+    max_body_bytes: int | None = None
+    exception_retries: int = 0
     max_depth: int | None = None
     robots_fail_closed: bool = False
     include_patterns: tuple[re.Pattern, ...] = ()
@@ -211,6 +213,36 @@ def build_session(*, user_agent: str, max_retries: int, backoff_factor: float) -
     return s
 
 
+class BodyTooLargeError(ValueError):
+    pass
+
+
+def _read_limited_bytes(resp: requests.Response, *, max_bytes: int | None) -> bytes:
+    if max_bytes is None or int(max_bytes) <= 0:
+        return resp.content
+
+    # Fast path: honor Content-Length when present to avoid downloading large bodies.
+    cl = (resp.headers.get("Content-Length") or "").strip()
+    try:
+        content_length = int(cl)
+    except Exception:
+        content_length = None
+    if content_length is not None and content_length > int(max_bytes):
+        raise BodyTooLargeError(
+            f"body exceeded max_bytes={max_bytes} (content_length={content_length})"
+        )
+
+    buf = bytearray()
+    limit = int(max_bytes)
+    for chunk in resp.iter_content(chunk_size=64 * 1024):
+        if not chunk:
+            continue
+        buf.extend(chunk)
+        if len(buf) > limit:
+            raise BodyTooLargeError(f"body exceeded max_bytes={max_bytes}")
+    return bytes(buf)
+
+
 def login_with_hidden_fields(
     *,
     session: requests.Session,
@@ -269,6 +301,7 @@ def crawl(
 
     # Per-host pacing.
     next_ok_at: dict[str, float] = {}
+    exc_attempts: dict[str, int] = {}
 
     def _url_allowed(url: str) -> tuple[bool, str | None]:
         if config.include_patterns:
@@ -347,102 +380,142 @@ def crawl(
         _sleep_if_needed(url)
 
         try:
-            resp = session.get(url, timeout=config.timeout_s, allow_redirects=False)
+            resp = session.get(url, timeout=config.timeout_s, allow_redirects=False, stream=True)
         except requests.RequestException as e:
+            attempts = exc_attempts.get(url, 0)
+            will_retry = bool(config.exception_retries) and attempts < int(config.exception_retries)
             LOG.warning("fetch failed url=%s err=%s", url, e)
             if hooks and hooks.on_event:
-                hooks.on_event({"type": "fetch_error", "url": url, "error": str(e)})
+                ev: dict[str, object] = {"type": "fetch_error", "url": url, "error": str(e)}
+                if will_retry:
+                    ev["will_retry"] = True
+                    ev["retry_num"] = attempts + 1
+                    ev["retry_max"] = int(config.exception_retries)
+                hooks.on_event(ev)
+            if will_retry:
+                exc_attempts[url] = attempts + 1
+                st.seen.discard(url)
+                st.frontier.append((url, depth))
             _record_delay(url)
             continue
 
-        st.pages_fetched += 1
-        fetched_url = normalize_url(resp.url, strip_query_params=config.strip_query_params)
-        st.seen.add(fetched_url)
-        _record_delay(fetched_url)
+        try:
+            st.pages_fetched += 1
+            fetched_url = normalize_url(resp.url, strip_query_params=config.strip_query_params)
+            st.seen.add(fetched_url)
+            _record_delay(fetched_url)
 
-        status = resp.status_code
-        ctype = (resp.headers.get("Content-Type") or "").lower()
-        if hooks and hooks.on_event:
-            ev: dict[str, object] = {
-                "type": "fetch",
-                "url": url,
-                "fetched_url": fetched_url,
-                "status": status,
-                "depth": depth,
-            }
-            if ctype:
-                ev["content_type"] = ctype
+            status = resp.status_code
+            ctype = (resp.headers.get("Content-Type") or "").lower()
+            if hooks and hooks.on_event:
+                ev: dict[str, object] = {
+                    "type": "fetch",
+                    "url": url,
+                    "fetched_url": fetched_url,
+                    "status": status,
+                    "depth": depth,
+                }
+                if ctype:
+                    ev["content_type"] = ctype
+                if 300 <= status < 400:
+                    loc = resp.headers.get("Location")
+                    if loc:
+                        redir = resolve_and_normalize(
+                            loc, base_url=fetched_url, strip_query_params=config.strip_query_params
+                        )
+                        if redir:
+                            ev["redirect_to"] = redir
+                hooks.on_event(ev)
+            LOG.debug("fetched status=%s url=%s", status, fetched_url)
+
             if 300 <= status < 400:
                 loc = resp.headers.get("Location")
                 if loc:
-                    redir = resolve_and_normalize(
+                    nxt = resolve_and_normalize(
                         loc, base_url=fetched_url, strip_query_params=config.strip_query_params
                     )
-                    if redir:
-                        ev["redirect_to"] = redir
-            hooks.on_event(ev)
-        LOG.debug("fetched status=%s url=%s", status, fetched_url)
+                    if (
+                        nxt
+                        and nxt not in st.seen
+                        and is_allowed_host(nxt, config.allowed_hosts)
+                        and _url_allowed(nxt)[0]
+                    ):
+                        st.frontier.append((nxt, depth))
+                _maybe_checkpoint()
+                continue
 
-        if 300 <= status < 400:
-            loc = resp.headers.get("Location")
-            if loc:
+            if status >= 400:
+                _maybe_checkpoint()
+                continue
+
+            if "text/html" not in ctype and "application/xhtml+xml" not in ctype:
+                _maybe_checkpoint()
+                continue
+
+            try:
+                raw = _read_limited_bytes(resp, max_bytes=config.max_body_bytes)
+            except BodyTooLargeError:
+                if hooks and hooks.on_event:
+                    cl = (resp.headers.get("Content-Length") or "").strip()
+                    try:
+                        content_length = int(cl)
+                    except Exception:
+                        content_length = None
+                    ev = {
+                        "type": "body_too_large",
+                        "url": url,
+                        "fetched_url": fetched_url,
+                        "depth": depth,
+                        "max_body_bytes": int(config.max_body_bytes or 0),
+                    }
+                    if content_length is not None:
+                        ev["content_length"] = content_length
+                    if ctype:
+                        ev["content_type"] = ctype
+                    hooks.on_event(ev)
+                _maybe_checkpoint()
+                continue
+
+            enc = resp.encoding or "utf-8"
+            html = raw.decode(enc, errors="replace")
+            soup = BeautifulSoup(html, "html.parser")
+
+            if config.extract_secret_flags and len(st.flags) < config.max_flags:
+                for h2 in soup.find_all("h2", {"class": "secret_flag"}):
+                    text = h2.get_text(strip=True)
+                    if not text:
+                        continue
+                    text = _FLAG_PREFIX_RE.sub("", text)
+                    if text and text not in st.flags:
+                        st.flags.add(text)
+                        print(text, flush=True)
+                        if hooks and hooks.on_flag:
+                            hooks.on_flag(text)
+                        if len(st.flags) >= config.max_flags:
+                            break
+
+            for a in soup.find_all("a"):
+                href = a.get("href")
                 nxt = resolve_and_normalize(
-                    loc, base_url=fetched_url, strip_query_params=config.strip_query_params
+                    href, base_url=fetched_url, strip_query_params=config.strip_query_params
                 )
+                if not nxt:
+                    continue
+                nxt_depth = depth + 1
+                if config.max_depth is not None and nxt_depth > config.max_depth:
+                    if hooks and hooks.on_event:
+                        hooks.on_event({"type": "depth_skip", "url": nxt, "from": fetched_url})
+                    continue
                 if (
-                    nxt
-                    and nxt not in st.seen
+                    nxt not in st.seen
                     and is_allowed_host(nxt, config.allowed_hosts)
                     and _url_allowed(nxt)[0]
                 ):
-                    st.frontier.append((nxt, depth))
+                    st.frontier.append((nxt, nxt_depth))
+
             _maybe_checkpoint()
-            continue
-
-        if status >= 400:
-            _maybe_checkpoint()
-            continue
-
-        if "text/html" not in ctype and "application/xhtml+xml" not in ctype:
-            _maybe_checkpoint()
-            continue
-
-        soup = BeautifulSoup(resp.text, "html.parser")
-
-        if config.extract_secret_flags and len(st.flags) < config.max_flags:
-            for h2 in soup.find_all("h2", {"class": "secret_flag"}):
-                text = h2.get_text(strip=True)
-                if not text:
-                    continue
-                text = _FLAG_PREFIX_RE.sub("", text)
-                if text and text not in st.flags:
-                    st.flags.add(text)
-                    print(text, flush=True)
-                    if hooks and hooks.on_flag:
-                        hooks.on_flag(text)
-                    if len(st.flags) >= config.max_flags:
-                        break
-
-        for a in soup.find_all("a"):
-            href = a.get("href")
-            nxt = resolve_and_normalize(
-                href, base_url=fetched_url, strip_query_params=config.strip_query_params
-            )
-            if not nxt:
-                continue
-            nxt_depth = depth + 1
-            if config.max_depth is not None and nxt_depth > config.max_depth:
-                if hooks and hooks.on_event:
-                    hooks.on_event({"type": "depth_skip", "url": nxt, "from": fetched_url})
-                continue
-            if (
-                nxt not in st.seen
-                and is_allowed_host(nxt, config.allowed_hosts)
-                and _url_allowed(nxt)[0]
-            ):
-                st.frontier.append((nxt, nxt_depth))
-
-        _maybe_checkpoint()
+        finally:
+            resp.close()
 
     return CrawlResult(seen=set(st.seen), flags=set(st.flags), pages_fetched=int(st.pages_fetched))
 

@@ -48,6 +48,18 @@ Add a per-host delay:
 webcrawler --start-url https://example.com --delay 0.25
 ```
 
+## Response Size Cap (Optional)
+Skip HTML parsing/extraction for very large pages:
+```bash
+webcrawler --start-url https://example.com --max-body-bytes 2000000
+```
+
+## Retry On Exception (Optional)
+If a request fails without an HTTP response (for example timeouts / connection resets), re-enqueue it:
+```bash
+webcrawler --start-url https://example.com --exception-retries 2
+```
+
 ## URL Filters (Optional)
 Include only URLs that match one or more regex patterns:
 ```bash

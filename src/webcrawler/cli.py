@@ -50,6 +50,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--max-pages", type=int, default=500, help="Maximum pages to fetch.")
     p.add_argument(
+        "--max-body-bytes",
+        type=int,
+        default=0,
+        help="Maximum response body bytes to read for HTML parsing/extraction (0 = unlimited).",
+    )
+    p.add_argument(
         "--max-depth",
         type=int,
         default=None,
@@ -71,6 +77,15 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--user-agent", default="webcrawler-scraper/0.1", help="HTTP User-Agent.")
     p.add_argument("--max-retries", type=int, default=2, help="Retry count for transient failures.")
     p.add_argument("--backoff", type=float, default=0.5, help="Retry backoff factor.")
+    p.add_argument(
+        "--exception-retries",
+        type=int,
+        default=0,
+        help=(
+            "If a fetch raises a RequestException (no HTTP response), re-enqueue up to N times "
+            "(0 = disabled)."
+        ),
+    )
 
     p.add_argument(
         "--include-regex",
@@ -191,6 +206,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.max_depth is not None and int(args.max_depth) < 0:
         print("error: --max-depth must be >= 0.", file=sys.stderr)
+        return 2
+    if args.max_body_bytes is not None and int(args.max_body_bytes) < 0:
+        print("error: --max-body-bytes must be >= 0.", file=sys.stderr)
+        return 2
+    if args.exception_retries is not None and int(args.exception_retries) < 0:
+        print("error: --exception-retries must be >= 0.", file=sys.stderr)
         return 2
 
     strip_query_params: set[str] = {
@@ -344,6 +365,8 @@ def main(argv: list[str] | None = None) -> int:
         user_agent=args.user_agent,
         timeout_s=args.timeout,
         max_pages=args.max_pages,
+        max_body_bytes=None if int(args.max_body_bytes or 0) <= 0 else int(args.max_body_bytes),
+        exception_retries=int(args.exception_retries or 0),
         max_depth=args.max_depth if args.max_depth is None else int(args.max_depth),
         delay_s=args.delay,
         robots_obey=bool(args.robots),
