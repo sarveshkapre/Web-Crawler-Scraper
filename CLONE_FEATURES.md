@@ -10,10 +10,6 @@
 
 - [ ] **P2: Concurrency + polite throttling** (Impact 4, Effort 4, Fit 4, Diff 2, Risk 3, Conf 3)
   - Optional parallel fetch with per-host caps + backpressure; keep robots/pacing correct.
-- [ ] **P3: Retry-on-exception with cap** (Impact 3, Effort 3, Fit 4, Diff 1, Risk 2, Conf 2)
-  - Re-enqueue transient fetch failures (timeouts/connection resets) a bounded number of times even if the request never produced an HTTP response.
-- [ ] **P3: Response size cap** (Impact 3, Effort 3, Fit 4, Diff 1, Risk 3, Conf 2)
-  - Add `--max-body-bytes` to bound memory/time spent on unexpectedly large pages; truncate parsing safely.
 - [ ] **P3: HTTP cache / conditional GET** (Impact 3, Effort 4, Fit 3, Diff 2, Risk 3, Conf 2)
   - Support `ETag`/`If-Modified-Since` to reduce refetching on repeated crawls.
 - [ ] **P3: Extraction rules engine** (Impact 3, Effort 4, Fit 3, Diff 4, Risk 3, Conf 2)
@@ -22,8 +18,14 @@
   - Optional Playwright-powered fetcher for JS-heavy pages (explicit opt-in).
 - [ ] **P3: Duplicate-content suppression** (Impact 2, Effort 3, Fit 3, Diff 2, Risk 2, Conf 2)
   - Optional body hashing (for HTML only) to avoid revisiting duplicate pages under multiple URLs.
+- [ ] **P3: Canonical link tag support** (Impact 3, Effort 3, Fit 3, Diff 2, Risk 3, Conf 2)
+  - Optionally respect `<link rel="canonical">` for dedupe to reduce duplicate fetches on sites with multiple URL variants.
+- [ ] **P3: Content-type allow/deny** (Impact 2, Effort 2, Fit 3, Diff 1, Risk 2, Conf 3)
+  - Add a simple content-type allowlist/denylist for parsing/extraction (still record fetch events for all content types).
 
 ## Implemented
+- [x] 2026-02-10: Response size cap (`--max-body-bytes`) to bound HTML parsing/extraction on very large pages (skip parsing beyond cap). Evidence: `src/webcrawler/crawler.py`, `src/webcrawler/cli.py`, `tests/test_max_body_bytes.py`, `README.md`, `make lint`, `make test`, `make smoke`. Commit: `c60792f`.
+- [x] 2026-02-10: Retry-on-exception with cap (`--exception-retries`) to re-enqueue transient fetch failures without an HTTP response. Evidence: `src/webcrawler/crawler.py`, `src/webcrawler/cli.py`, `tests/test_exception_retries.py`, `README.md`, `make lint`, `make test`, `make smoke`. Commit: `c60792f`.
 - [x] 2026-02-10: Max depth / hop limit (`--max-depth`) to bound traversal by link distance from seeds (start URLs and sitemap seeds count as depth 0). Evidence: `src/webcrawler/crawler.py`, `src/webcrawler/cli.py`, `src/webcrawler/state.py`, `tests/test_cli_max_depth.py`, `tests/test_cli_sitemap_seeding.py`, `README.md`, `make lint`, `make test`, `make smoke`. Commit: `6600ade`.
 - [x] 2026-02-10: Hard politeness mode (`--robots-fail-closed`) to fail closed when `robots.txt` can't be fetched (default remains fail-open). Evidence: `src/webcrawler/crawler.py`, `src/webcrawler/cli.py`, `tests/test_robots_fail_closed.py`, `README.md`, `make lint`, `make test`. Commit: `6600ade`.
 - [x] 2026-02-09: Sitemap seeding (`--sitemap-url`, `--sitemap-auto`, `--sitemap-from-robots`) to find non-linked pages. Evidence: `src/webcrawler/sitemaps.py`, `src/webcrawler/cli.py`, `tests/test_cli_sitemap_seeding.py`, `README.md`, `make lint`, `make test`, `make smoke`. Commit: `7e96dc2`.
@@ -48,9 +50,9 @@ Common baseline expectations for production crawlers/scrapers in this segment:
 - Long runs: pause/resume or checkpointing to avoid losing progress.
 
 ### Gap Map (High Level)
-- Missing: concurrency (per-host caps) and a hop-based `--max-depth`.
+- Missing: concurrency (per-host caps).
 - Weak: canonicalization beyond regex filters and query-param stripping (for example canonical link tag support).
-- Parity: robots obey + pacing knobs, retry/backoff, structured outputs, resume/checkpointing, sitemap seeding.
+- Parity: robots obey + pacing knobs, retry/backoff, response size caps, structured outputs, resume/checkpointing, sitemap seeding.
 - Differentiator: intentionally small, automation-friendly CLI with optional "secret flag" extraction and a stable summary JSON.
 
 Sources (untrusted; for feature expectation only):
@@ -58,6 +60,7 @@ Sources (untrusted; for feature expectation only):
 https://docs.scrapy.org/en/latest/topics/autothrottle.html
 https://docs.scrapy.org/en/latest/topics/settings.html#std-setting-ROBOTSTXT_OBEY
 https://docs.scrapy.org/en/latest/topics/downloader-middleware.html?highlight=RetryMiddleware#retrymiddleware
+https://docs.scrapy.org/en/latest/topics/settings.html#download-maxsize
 https://docs.scrapy.org/en/latest/topics/feed-exports.html
 https://docs.scrapy.org/en/latest/topics/spiders.html#sitemapspider
 https://doc.scrapy.org/en/master/topics/jobs.html

@@ -9,7 +9,7 @@
 - Crawl engine basics:
   - Frontier: FIFO queue + normalized URL dedupe.
   - Politeness: robots.txt obeyed by default; optional per-host delay; Crawl-delay hint parsing (best-effort).
-  - Reliability: bounded retries/backoff via `requests` + `urllib3.Retry`; manual 3xx redirect enqueue.
+  - Reliability: bounded retries/backoff via `requests` + `urllib3.Retry`; optional crawl-level exception retries; optional HTML response size cap; manual 3xx redirect enqueue.
   - Outputs: optional JSONL fetch event stream (`--out-urls`) and line-based flags output (`--out-flags`).
   - Persistence: optional `--state` checkpointing + `--resume`.
 
@@ -18,6 +18,8 @@
 
 ## Recent Decisions
 - Template: YYYY-MM-DD | Decision | Why | Evidence (tests/logs) | Commit | Confidence (high/medium/low) | Trust (trusted/untrusted)
+- 2026-02-10 | Add response size cap (`--max-body-bytes`) | Bounding HTML body size prevents pathological memory/time usage on large pages while keeping fetch events and crawl progress intact | `make lint`, `make test`, `make smoke`, new max-body-bytes test, GitHub Actions CI success | c60792f | high | trusted
+- 2026-02-10 | Add retry-on-exception (`--exception-retries`) | Transient connection/timeout failures can recover later; bounded re-enqueue improves crawl completeness without risking infinite loops | `make lint`, `make test`, `make smoke`, new exception retry test, GitHub Actions CI success | c60792f | high | trusted
 - 2026-02-10 | Add `--max-depth` hop limit + persist hop depths in state v2 | Depth limits are a core crawl control to bound traversal; persisting depth preserves semantics across resume/checkpoint runs | `make lint`, `make test`, `make smoke`, new max-depth + sitemap depth tests, GitHub Actions CI success | 6600ade | high | trusted
 - 2026-02-10 | Add `--robots-fail-closed` hard politeness mode | Some controlled environments prefer failing closed when robots.txt is unavailable, preventing accidental non-compliance | `make lint`, `make test`, new robots fail-closed test, GitHub Actions CI success | 6600ade | high | trusted
 - 2026-02-09 | Add sitemap seeding (`--sitemap-url`, `--sitemap-auto`, `--sitemap-from-robots`) | Helps find pages that are not discoverable via link traversal; keeps crawler useful on sites with sparse navigation | `make lint`, `make test`, `make smoke`, new sitemap seeding tests, GitHub Actions CI success | 7e96dc2 | high | trusted
@@ -36,11 +38,15 @@
 
 ## Next Prioritized Tasks
 - P2: Concurrency with per-host caps + politeness defaults.
-- P3: Retry-on-exception with cap.
-- P3: Response size cap (`--max-body-bytes`).
+- P3: HTTP cache / conditional GET.
+- P3: Extraction rules engine.
 
 ## Verification Evidence
 - Template: YYYY-MM-DD | Command | Key output | Status (pass/fail)
+- 2026-02-10 | `. .venv/bin/activate && make lint` | `All checks passed!` | pass
+- 2026-02-10 | `. .venv/bin/activate && make test` | `24 passed` | pass
+- 2026-02-10 | `. .venv/bin/activate && make smoke` | `exit_code=0 stdout_flags=['SMOKE_ONE','SMOKE_TWO']` | pass
+- 2026-02-10 | `gh run watch 21853158608 --interval 5 --exit-status` | `CI completed success` | pass
 - 2026-02-10 | `. .venv/bin/activate && make lint` | `All checks passed!` | pass
 - 2026-02-10 | `. .venv/bin/activate && make test` | `22 passed` | pass
 - 2026-02-10 | `. .venv/bin/activate && make smoke` | `exit_code=0 stdout_flags=['SMOKE_ONE','SMOKE_TWO']` | pass
