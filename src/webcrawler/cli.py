@@ -73,6 +73,14 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="If robots.txt can't be fetched, disallow crawling that host (default: fail-open).",
     )
+    p.add_argument(
+        "--respect-canonical",
+        action="store_true",
+        help=(
+            "Respect HTML <link rel='canonical'> hints: if canonical URL was already seen, "
+            "skip duplicate page link expansion."
+        ),
+    )
 
     p.add_argument("--user-agent", default="webcrawler-scraper/0.1", help="HTTP User-Agent.")
     p.add_argument("--max-retries", type=int, default=2, help="Retry count for transient failures.")
@@ -136,6 +144,18 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=20_000,
         help="Maximum number of URLs to seed from sitemaps (0 = no limit).",
+    )
+    p.add_argument(
+        "--sitemap-max-sitemaps",
+        type=int,
+        default=100,
+        help="Maximum number of sitemap documents to fetch when seeding (must be > 0).",
+    )
+    p.add_argument(
+        "--sitemap-max-bytes",
+        type=int,
+        default=10_000_000,
+        help="Maximum bytes to read per sitemap document (must be > 0).",
     )
 
     p.add_argument("--login-url", help="Login URL for form-based auth (optional).")
@@ -204,6 +224,36 @@ def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     _configure_logging(args.verbose)
 
+    if int(args.max_pages) <= 0:
+        print("error: --max-pages must be > 0.", file=sys.stderr)
+        return 2
+    if int(args.max_flags) <= 0:
+        print("error: --max-flags must be > 0.", file=sys.stderr)
+        return 2
+    if float(args.timeout) <= 0:
+        print("error: --timeout must be > 0.", file=sys.stderr)
+        return 2
+    if float(args.delay) < 0:
+        print("error: --delay must be >= 0.", file=sys.stderr)
+        return 2
+    if int(args.max_retries) < 0:
+        print("error: --max-retries must be >= 0.", file=sys.stderr)
+        return 2
+    if float(args.backoff) < 0:
+        print("error: --backoff must be >= 0.", file=sys.stderr)
+        return 2
+    if int(args.checkpoint_every) < 0:
+        print("error: --checkpoint-every must be >= 0.", file=sys.stderr)
+        return 2
+    if int(args.sitemap_max_urls) < 0:
+        print("error: --sitemap-max-urls must be >= 0.", file=sys.stderr)
+        return 2
+    if int(args.sitemap_max_sitemaps) <= 0:
+        print("error: --sitemap-max-sitemaps must be > 0.", file=sys.stderr)
+        return 2
+    if int(args.sitemap_max_bytes) <= 0:
+        print("error: --sitemap-max-bytes must be > 0.", file=sys.stderr)
+        return 2
     if args.max_depth is not None and int(args.max_depth) < 0:
         print("error: --max-depth must be >= 0.", file=sys.stderr)
         return 2
@@ -371,6 +421,7 @@ def main(argv: list[str] | None = None) -> int:
         delay_s=args.delay,
         robots_obey=bool(args.robots),
         robots_fail_closed=bool(args.robots_fail_closed),
+        respect_canonical=bool(args.respect_canonical),
         extract_secret_flags=bool(args.extract_secret_flags),
         max_flags=args.max_flags,
         include_patterns=tuple(include_patterns),
@@ -486,6 +537,8 @@ def main(argv: list[str] | None = None) -> int:
                 exclude_patterns=tuple(exclude_patterns),
                 strip_query_params=strip_query_params or None,
                 max_urls=int(args.sitemap_max_urls or 0),
+                max_sitemaps=int(args.sitemap_max_sitemaps),
+                max_bytes=int(args.sitemap_max_bytes),
             )
             added = 0
             for u in seeded:

@@ -38,6 +38,7 @@ class CrawlConfig:
     exception_retries: int = 0
     max_depth: int | None = None
     robots_fail_closed: bool = False
+    respect_canonical: bool = False
     include_patterns: tuple[re.Pattern, ...] = ()
     exclude_patterns: tuple[re.Pattern, ...] = ()
     strip_query_params: frozenset[str] = frozenset()
@@ -341,6 +342,25 @@ def crawl(
             return
         next_ok_at[host] = time.monotonic() + delay
 
+    def _extract_canonical_url(*, html_soup: BeautifulSoup, base_url: str) -> str | None:
+        for link in html_soup.find_all("link"):
+            rel = link.get("rel")
+            if not rel:
+                continue
+            tokens = rel if isinstance(rel, list) else [rel]
+            rel_tokens = {str(x).strip().lower() for x in tokens if str(x).strip()}
+            if "canonical" not in rel_tokens:
+                continue
+            href = link.get("href")
+            canonical = resolve_and_normalize(
+                href,
+                base_url=base_url,
+                strip_query_params=config.strip_query_params,
+            )
+            if canonical:
+                return canonical
+        return None
+
     while st.frontier and st.pages_fetched < config.max_pages and len(st.flags) < config.max_flags:
         item = st.frontier.popleft()
         if isinstance(item, tuple) and len(item) == 2:
@@ -480,6 +500,48 @@ def crawl(
             html = raw.decode(enc, errors="replace")
             soup = BeautifulSoup(html, "html.parser")
 
+            skip_link_expansion = False
+            if config.respect_canonical:
+                canonical_url = _extract_canonical_url(html_soup=soup, base_url=fetched_url)
+                if canonical_url and canonical_url != fetched_url:
+                    canonical_allowed, canonical_reason = _url_allowed(canonical_url)
+                    if not canonical_allowed or not is_allowed_host(
+                        canonical_url, config.allowed_hosts
+                    ):
+                        if hooks and hooks.on_event:
+                            hooks.on_event(
+                                {
+                                    "type": "canonical_ignored",
+                                    "url": url,
+                                    "fetched_url": fetched_url,
+                                    "canonical_url": canonical_url,
+                                    "reason": canonical_reason or "host_mismatch",
+                                }
+                            )
+                    else:
+                        if hooks and hooks.on_event:
+                            hooks.on_event(
+                                {
+                                    "type": "canonical_hint",
+                                    "url": url,
+                                    "fetched_url": fetched_url,
+                                    "canonical_url": canonical_url,
+                                }
+                            )
+                        if canonical_url in st.seen:
+                            skip_link_expansion = True
+                            if hooks and hooks.on_event:
+                                hooks.on_event(
+                                    {
+                                        "type": "canonical_skip_links",
+                                        "url": url,
+                                        "fetched_url": fetched_url,
+                                        "canonical_url": canonical_url,
+                                    }
+                                )
+                        else:
+                            st.frontier.appendleft((canonical_url, depth))
+
             if config.extract_secret_flags and len(st.flags) < config.max_flags:
                 for h2 in soup.find_all("h2", {"class": "secret_flag"}):
                     text = h2.get_text(strip=True)
@@ -493,6 +555,10 @@ def crawl(
                             hooks.on_flag(text)
                         if len(st.flags) >= config.max_flags:
                             break
+
+            if skip_link_expansion:
+                _maybe_checkpoint()
+                continue
 
             for a in soup.find_all("a"):
                 href = a.get("href")

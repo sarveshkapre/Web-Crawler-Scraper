@@ -3,6 +3,7 @@ from __future__ import annotations
 import gzip
 import logging
 import re
+from collections import deque
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
@@ -72,7 +73,8 @@ def _parse_sitemap_xml(xml_bytes: bytes) -> tuple[list[str], list[str]]:
     """
     Return (urls, nested_sitemaps) from either `urlset` or `sitemapindex`.
     """
-    root = lxml.etree.fromstring(xml_bytes)  # noqa: S320 (trusted input is not assumed)
+    parser = lxml.etree.XMLParser(resolve_entities=False, no_network=True, recover=True)
+    root = lxml.etree.fromstring(xml_bytes, parser=parser)  # noqa: S320 (explicit safe parser)
     tag = lxml.etree.QName(root.tag).localname.lower()
 
     if tag == "urlset":
@@ -120,11 +122,11 @@ def seed_from_sitemaps(
         return True
 
     # Normalize sitemap URLs too, so redirect/query variants don't cause repeated fetches.
-    q: list[str] = [
+    q = deque(
         normalize_url(u, strip_query_params=strip_query_params)
         for u in sitemap_urls
         if str(u).strip()
-    ]
+    )
     seen_sitemaps: set[str] = set()
     out: list[str] = []
     out_set: set[str] = set()
@@ -134,7 +136,7 @@ def seed_from_sitemaps(
     errors = 0
 
     while q and len(seen_sitemaps) < max_sitemaps and (max_urls <= 0 or len(out) < max_urls):
-        sm_url = q.pop(0)
+        sm_url = q.popleft()
         if sm_url in seen_sitemaps:
             continue
         parts = urlsplit(sm_url)

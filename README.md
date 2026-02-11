@@ -82,6 +82,11 @@ Or strip specific parameters (repeatable):
 webcrawler --start-url https://example.com --strip-query-param utm_source --strip-query-param gclid
 ```
 
+Respect canonical-link hints to reduce duplicate link expansion:
+```bash
+webcrawler --start-url https://example.com --respect-canonical
+```
+
 ## Sitemaps (Optional)
 Seed the crawl frontier from sitemap XML (helps find pages that aren't linked from navigation):
 ```bash
@@ -96,6 +101,14 @@ webcrawler --start-url https://example.com --sitemap-auto
 Discover sitemap URLs via `robots.txt` `Sitemap:` declarations:
 ```bash
 webcrawler --start-url https://example.com --sitemap-from-robots
+```
+
+Tune sitemap seeding safety limits:
+```bash
+webcrawler --start-url https://example.com \
+  --sitemap-auto \
+  --sitemap-max-sitemaps 200 \
+  --sitemap-max-bytes 5000000
 ```
 
 ## Login (Optional)
